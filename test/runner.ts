@@ -49,7 +49,7 @@ const runnerConfig: RunnerConfig = {
   workerId: worker.id,
   token,
   maxConcurrent: 2,
-  credentials: {},
+  credentials: { personal: { CLAUDE_CONFIG_DIR: "/home/lucas/.claude-personal" } },
   retrySeconds: 1,
 };
 
@@ -149,6 +149,68 @@ await check("a resumed session is resumed, not restarted", async () => {
   assert.equal(argv[argv.indexOf("--resume") + 1], okItem.session.id);
   assert.ok(!argv.includes("--session-id"), "and --session-id is not also passed");
   assert.equal(store.getSession(okItem.session.id).runCount, 2);
+});
+
+await check("a stray credential in the runner's own shell cannot hijack a profile", async () => {
+  // The precedence order is against us: ANTHROPIC_API_KEY beats a subscription
+  // login, and under -p it is used without asking. A dev machine very plausibly
+  // has one exported, and an inherited CLAUDE_CONFIG_DIR would be just as bad.
+  process.env.ANTHROPIC_API_KEY = "sk-ant-leaked-from-the-shell";
+  process.env.CLAUDE_CODE_OAUTH_TOKEN = "stale-token";
+  process.env.CLAUDE_CONFIG_DIR = "/home/lucas/.claude-some-other-account";
+  try {
+    const profile = store.createProfile({
+      workerId: worker.id,
+      label: "subscription",
+      command: fakeAgent,
+      launchArgs: fakeAgentLaunchArgs,
+      env: { AWM_TEST_MODE: "ok", AWM_TEST_ARGV_OUT: argvOut },
+      credentialRef: "personal",
+    });
+    const item = newSession("proj-creds", profile.id, "Whose account am I?");
+    await runAgent(item, client, runnerConfig).done;
+
+    const seen = (JSON.parse(readFileSync(argvOut, "utf8")) as {
+      credentialEnv: Record<string, string>;
+    }).credentialEnv;
+
+    assert.equal(
+      seen.CLAUDE_CONFIG_DIR,
+      "/home/lucas/.claude-personal",
+      "the profile's account wins, not the one the runner inherited",
+    );
+    assert.ok(!("ANTHROPIC_API_KEY" in seen), "an inherited API key must not reach the agent");
+    assert.ok(!("CLAUDE_CODE_OAUTH_TOKEN" in seen), "nor an inherited OAuth token");
+  } finally {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    delete process.env.CLAUDE_CONFIG_DIR;
+  }
+});
+
+await check("an expired login is reported as a credential problem, with the fix", async () => {
+  const profile = store.createProfile({
+    workerId: worker.id,
+    label: "expired",
+    command: fakeAgent,
+    launchArgs: fakeAgentLaunchArgs,
+    env: { AWM_TEST_MODE: "authfail", AWM_TEST_ARGV_OUT: argvOut },
+    credentialRef: "personal",
+  });
+  const item = newSession("proj-expired", profile.id, "Do some work.");
+  await runAgent(item, client, runnerConfig).done;
+
+  const session = store.getSession(item.session.id);
+  assert.equal(session.state, "failed");
+  const body = store.messages(session.id).map((m) => m.body).join("\n");
+  assert.match(body, /credential problem/i, "it is not just another failure");
+  assert.match(
+    body,
+    /CLAUDE_CONFIG_DIR=\/home\/lucas\/\.claude-personal claude \/login/,
+    "and names the exact command for that account",
+  );
+  assert.match(body, new RegExp(worker.id), "on the right machine");
+  assert.match(body, /keep failing/i, "and says it affects every future session");
 });
 
 await check("a failing run is recorded as failed, with stderr", async () => {

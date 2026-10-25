@@ -104,13 +104,49 @@ npm run runner
 ```
 
 `credentials` maps a profile's `credential_ref` to the environment that profile
-needs, and lives only on the worker. Separate `CLAUDE_CONFIG_DIR` values are how
-several subscription accounts coexist on one machine; an API-key account is just
-an env var.
+needs, and lives only on the worker.
 
 The runner needs no inbound connectivity, survives network changes, and backs
 off and retries when the server is unreachable. A bad token is the one failure it
 exits on, since retrying cannot fix it.
+
+### Accounts and credentials
+
+Three styles work, and one worker can mix them:
+
+**Subscription login, one config directory per account.** This is the documented
+way to keep several Anthropic accounts signed in on one machine: each
+`CLAUDE_CONFIG_DIR` has its own settings, history and claude.ai login, and on
+macOS the keychain entry is keyed to the directory too, so the accounts really
+are isolated. It needs one interactive login per account, once:
+
+```bash
+CLAUDE_CONFIG_DIR=~/.claude-personal claude     # log in, then quit
+CLAUDE_CONFIG_DIR=~/.claude-client-acme claude  # log in, then quit
+```
+
+Then `"personal": { "CLAUDE_CONFIG_DIR": "/Users/lucas/.claude-personal" }`.
+
+**Subscription login without a browser.** `claude setup-token` mints a one-year
+OAuth token on a machine you can log in from; put it in a credential as
+`CLAUDE_CODE_OAUTH_TOKEN`. Useful for a machine where opening a browser is
+awkward. It can only make model requests, and it expires after a year.
+
+**API key.** `"client-acme": { "ANTHROPIC_API_KEY": "sk-ant-..." }`.
+
+The runner **clears every credential variable it inherited** before applying a
+profile's own environment. This is not tidiness: `ANTHROPIC_API_KEY` outranks a
+subscription login, and under `-p` it is used without prompting, so a single
+stray export in the shell that started the runner would silently redirect every
+subscription profile onto the wrong account and bill the wrong place. A profile
+that names no credential gets the machine's default account, not whatever the
+runner happened to inherit.
+
+**Subscription logins expire**, and an unattended session cannot do anything
+about it. When a run fails on authentication, the runner says so explicitly and
+prints the exact command to fix that account on that machine, because otherwise
+it looks like an ordinary failure and every later session on the profile fails
+the same way.
 
 ### Profiles on Windows
 

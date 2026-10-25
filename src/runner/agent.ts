@@ -10,6 +10,103 @@ const SHIM = join(dirname(fileURLToPath(import.meta.url)), "shim.ts");
 const FLUSH_BYTES = 4096;
 const FLUSH_MS = 2000;
 
+/**
+ * Every credential source Claude Code consults.
+ *
+ * These are cleared before a profile's own environment is applied, because the
+ * precedence order is not in our favour: ANTHROPIC_API_KEY outranks a
+ * subscription login, and under -p it is used without asking. A stray export in
+ * the shell that started the runner would otherwise silently redirect every
+ * subscription profile onto the wrong account -- the exact thing this tool
+ * exists to control. CLAUDE_CONFIG_DIR is cleared for the same reason, so a
+ * profile that names no config dir gets the default account rather than
+ * whichever one the runner happened to inherit.
+ */
+const CREDENTIAL_VARS = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_PROFILE",
+  "ANTHROPIC_FEDERATION_RULE_ID",
+  "ANTHROPIC_ORGANIZATION_ID",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CONFIG_DIR",
+];
+
+function agentEnv(
+  profileEnv: Record<string, string>,
+  credentialEnv: Record<string, string> | undefined,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of CREDENTIAL_VARS) delete env[key];
+  return { ...env, ...profileEnv, ...credentialEnv };
+}
+
+/** Error categories in a stream-json api_retry event that mean "fix the account". */
+const CREDENTIAL_ERRORS = new Set([
+  "authentication_failed",
+  "oauth_org_not_allowed",
+  "account_on_hold",
+  "billing_error",
+  "cloud_credential_error",
+]);
+
+const CREDENTIAL_TEXT =
+  /login expired|run \/login|not logged in|invalid api key|authentication_error|credit balance|oauth token has expired|invalid bearer token/i;
+
+/** True when this message means the profile's credential is the problem. */
+function looksLikeCredentialFailure(msg: unknown): boolean {
+  if (typeof msg !== "object" || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  if (m.type === "system" && m.subtype === "api_retry") {
+    return CREDENTIAL_ERRORS.has(String(m.error));
+  }
+  if (m.type === "result") {
+    return typeof m.result === "string" && CREDENTIAL_TEXT.test(m.result);
+  }
+  return false;
+}
+
+/**
+ * What to actually do about a broken credential, which depends on how the
+ * profile authenticates. A subscription login expires and cannot refresh
+ * itself, and the docs warn that unattended sessions are where that bites --
+ * so say which command to run, on which machine, for which account.
+ */
+function credentialAdvice(
+  profileId: string,
+  workerId: string,
+  env: Record<string, string>,
+): string {
+  const configDir = env.CLAUDE_CONFIG_DIR;
+  if (configDir) {
+    return (
+      `[credential problem on profile ${profileId}. Its subscription login has expired or ` +
+      `was revoked. On ${workerId}, run: CLAUDE_CONFIG_DIR=${configDir} claude /login. ` +
+      `Every session on this profile will keep failing until you do.]`
+    );
+  }
+  if (env.CLAUDE_CODE_OAUTH_TOKEN) {
+    return (
+      `[credential problem on profile ${profileId}. Its long-lived OAuth token has expired ` +
+      `or been revoked; these last a year. Run claude setup-token and update this runner's ` +
+      `credentials entry on ${workerId}.]`
+    );
+  }
+  if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) {
+    return (
+      `[credential problem on profile ${profileId}. Its API key was rejected -- check whether ` +
+      `it was revoked, or whether the organization is out of credit.]`
+    );
+  }
+  return (
+    `[credential problem on profile ${profileId}. It uses the default account on ${workerId}, ` +
+    `whose login has expired. Run claude /login there.]`
+  );
+}
+
 function systemPrompt(workerId: string): string {
   return [
     `You are running unattended on ${workerId}, started from a task queue.`,
@@ -225,15 +322,17 @@ export function runAgent(
     ...profile.args,
   ];
 
+  const resolvedEnv = agentEnv(profile.env, credentialEnv);
   const child = spawn(profile.command, args, {
     cwd: project.path,
-    env: { ...process.env, ...profile.env, ...credentialEnv },
+    env: resolvedEnv,
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
   });
 
   const out = new OutputBuffer(client, session.id);
   let killed = false;
+  let credentialFailure = false;
 
   // Every listener is attached synchronously, before anything is awaited. A
   // spawn failure emits 'error' on the next tick, and an unhandled 'error' on a
@@ -255,6 +354,7 @@ export function runAgent(
         out.add(line.trim());
         continue;
       }
+      if (looksLikeCredentialFailure(parsed)) credentialFailure = true;
       const summary = summarize(parsed);
       if (!summary) continue;
       if (summary.isResult) {
@@ -297,6 +397,17 @@ export function runAgent(
 
     if (exitCode !== 0 && stderr.trim()) {
       out.add(`[stderr]\n${stderr.trim().slice(-4000)}`);
+    }
+    // An expired login looks like an ordinary failure in the transcript, but it
+    // will break every future session on this profile until someone logs in. Say
+    // so, and say where.
+    if (credentialFailure) {
+      out.add(
+        credentialAdvice(profile.id, config.workerId, {
+          ...profile.env,
+          ...credentialEnv,
+        }),
+      );
     }
     await out.drain(exitCode === 0 ? "output" : "error");
 
