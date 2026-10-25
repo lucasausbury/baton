@@ -18,12 +18,14 @@ is set only by an explicit ask, because you cannot tell "waiting on stdin" from
 "thinking hard for four minutes" by inspecting a process. A final "all done"
 message is just output and blocks nothing.
 
-**The agent calls out; the runner does not mediate.** `claude -p` runs deny
+**The agent calls out; the runner does not mediate.** `claude -p` denies
 approvals by default, and the supported escape is a permission host named with
-`--permission-prompt-tool`. So permission requests and clarifying questions
-travel from the agent to this server over MCP, and the runner only has to spawn
-the process, stream its output, and report the exit code. No stdin scraping, no
-agent-to-agent messenger.
+`--permission-prompt-tool`. So permission requests *and* clarifying questions
+travel from the agent to this server, and the runner only spawns the process,
+streams its output, and reports the exit code. No stdin scraping, no
+agent-to-agent messenger. The Agent SDK documents that a permission host may
+stay pending indefinitely, which is what makes "park until someone picks up the
+phone" a supported design rather than a hack.
 
 **Workers only ever talk outbound.** They roam between networks and have no
 stable address, so everything is long-polling: the runner holds a request open
@@ -37,9 +39,13 @@ have not read.
 
 **No credentials in the database.** A profile carries non-secret env (such as
 `CLAUDE_CONFIG_DIR`) plus a `credential_ref` that the runner resolves from its
-own local config.
+own local config file.
 
-## Running it
+**An ambiguous answer is not consent.** If you reply to an approval with
+anything that is not clearly affirmative, the shim denies the call and passes
+your words through as guidance, so the agent adapts instead of proceeding.
+
+## Running the server
 
 Needs Node 24+ (uses built-in `node:sqlite` and runs TypeScript directly, so
 there is no build step and no native dependency).
@@ -49,19 +55,20 @@ npm install
 AWM_ADMIN_TOKEN=$(openssl rand -hex 24) npm run server
 ```
 
-Then register a machine and a project:
+Register a machine, a profile and a project:
 
 ```bash
 npm run cli -- worker add "MacBook Pro" --platform darwin
 npm run cli -- profile add --worker macbook-pro --label opus-personal \
-  --command claude --args "--model opus" --env CLAUDE_CONFIG_DIR=~/.claude-personal
+  --command claude --args "--model opus" --env CLAUDE_CONFIG_DIR=~/.claude-personal \
+  --credential personal
 npm run cli -- project add --name alexandria --worker macbook-pro \
   --path /Users/lucas/src/alexandria --profile macbook-pro:opus-personal
 ```
 
 The worker token is printed once and is not recoverable.
 
-### Configuration
+### Server configuration
 
 | Variable | Default | Purpose |
 | - | - | - |
@@ -70,9 +77,66 @@ The worker token is printed once and is not recoverable.
 | `AWM_ADMIN_TOKEN` | — | Bearer token for `/mcp`; required unless bound to loopback |
 | `AWM_NTFY_TOPIC` | — | ntfy topic for push; without it notifications are logged only |
 | `AWM_NTFY_URL` | `https://ntfy.sh` | Point at a self-hosted ntfy |
-| `AWM_PUBLIC_URL` | — | Used to attach a click-through URL to pushes |
+| `AWM_PUBLIC_URL` | — | Attaches a click-through URL to pushes |
 | `AWM_APPROVAL_WAIT_MS` | 6h | How long an approval request may stay parked |
 | `AWM_BLOCKED_REMINDER_MS` | 20m | Re-notify about a session still blocked |
+
+## Running a worker
+
+On each dev machine, create `runner.config.json` (or point `AWM_RUNNER_CONFIG`
+at one) and start the runner:
+
+```json
+{
+  "serverUrl": "https://awm.example.com",
+  "workerId": "macbook-pro",
+  "token": "awm_...",
+  "maxConcurrent": 2,
+  "credentials": {
+    "personal": { "CLAUDE_CONFIG_DIR": "/Users/lucas/.claude-personal" },
+    "client-acme": { "ANTHROPIC_API_KEY": "sk-ant-..." }
+  }
+}
+```
+
+```bash
+npm run runner
+```
+
+`credentials` maps a profile's `credential_ref` to the environment that profile
+needs, and lives only on the worker. Separate `CLAUDE_CONFIG_DIR` values are how
+several subscription accounts coexist on one machine; an API-key account is just
+an env var.
+
+The runner needs no inbound connectivity, survives network changes, and backs
+off and retries when the server is unreachable. A bad token is the one failure it
+exits on, since retrying cannot fix it.
+
+### Profiles on Windows
+
+Node will not spawn a `.cmd` or `.bat` without a shell, and running one through
+`cmd.exe` would put your prompt, the system prompt and a JSON blob through shell
+parsing — so the runner refuses to do it and says so. npm installs Claude Code on
+Windows as `claude.cmd`, so a Windows profile needs either `claude.exe` or node
+plus the CLI entry point:
+
+```bash
+npm run cli -- profile add --worker windows-desktop --label opus-personal \
+  --command "C:/Program Files/nodejs/node.exe" \
+  --launch-args "C:/Users/lucas/AppData/Roaming/npm/node_modules/@anthropic-ai/claude-code/cli.js" \
+  --args "--model opus"
+```
+
+`--launch-args` go before the runner's own flags; `--args` go after.
+
+### Controlling how much it asks you
+
+A `-p` run starts in Manual mode, so anything needing approval reaches your
+phone. That is correct but can be chatty. Turn it down per profile with
+`--args`, for example `--args "--permission-mode acceptEdits"` or
+`--args "--allowedTools Read,Edit,Bash(git *)"`. The profile is the right place
+for this, since how much autonomy to grant depends on which account and which
+project.
 
 ## Interfaces
 
@@ -90,7 +154,7 @@ conversation when you create a task, so the planning happens there and calling
 
 | Route | Purpose |
 | - | - |
-| `GET /v1/work?wait=ms` | Long-poll; claims and returns work for this worker |
+| `GET /v1/work?wait=ms&limit=n` | Long-poll; claims up to `n`. `limit=0` asks only about cancellations |
 | `POST /v1/sessions/:id/started` | Process is up |
 | `POST /v1/sessions/:id/output` | Append output (`kind`: `output`/`result`/`error`) |
 | `POST /v1/sessions/:id/ask` | Ask the operator; **held open until answered** |
@@ -104,23 +168,32 @@ request counts as a heartbeat.
 ## Tests
 
 ```bash
-npm run smoke   # store and state machine, in-process
-npm run api     # the server over real HTTP, including a real MCP client
+npm run smoke        # store and state machine, in-process
+npm run api          # the server over real HTTP, including a real MCP client
+npm run runner-test  # agent spawning, cancellation, and the shim over stdio
 npm run typecheck
 ```
 
+The runner suite drives the permission shim as a real MCP server and asserts the
+exact argument list the agent is spawned with, which is where the interesting
+mistakes live.
+
 ## Not built yet
 
-- **The runner.** Polls `/v1/work`, spawns the agent with the profile's env,
-  streams output back, reports the exit code.
-- **The permission shim.** A tiny stdio MCP server the runner spawns and names
-  with `--permission-prompt-tool`, which relays approvals to `/v1/.../ask`. It
-  is local rather than pointed at this server directly so that session startup
-  does not wait on café wifi, and so the worker token stays on the worker.
-- **One open question.** How long Claude Code will wait for the permission tool
-  to answer is undocumented. If it waits indefinitely, approvals park until
-  answered. If it caps out, the shim denies with "approval pending" and the
-  answer arrives via `--resume` instead — same states, same tools, just a
-  restart rather than a resume mid-turn.
 - **A read-only status page**, for glancing at the queue without starting a
   conversation.
+- **`defer` for very long waits.** A parked agent is cheap but not free. A
+  `PreToolUse` hook can return `defer`, which lets the process exit and resume
+  from the persisted session when the answer arrives — worth doing if you find
+  yourself approving things the next morning.
+- **Feeding operator messages to a live agent's stdin.** The server side exists
+  (`/v1/sessions/:id/inbound`, `--input-format stream-json`) but nothing needs it
+  yet, because approvals and questions both go out through the shim.
+
+## One thing to verify on first real use
+
+The field names Claude Code passes to a `--permission-prompt-tool` are not
+documented. The shim accepts the plausible spellings (`tool_name`/`toolName`,
+`input`/`tool_input`) and logs whatever actually arrives to stderr, which the
+runner captures. Check that log on the first real approval and tighten the schema
+once it is known.

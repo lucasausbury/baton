@@ -134,17 +134,28 @@ export function createRunnerHandler(store: Store): RequestHandler {
     }
     store.heartbeat(worker.id, typeof req.headers["x-platform"] === "string" ? req.headers["x-platform"] : undefined);
 
-    // Long-poll for work. Returns as soon as anything is queued for this worker.
+    // Long-poll for work. Returns as soon as anything is queued for this
+    // worker. `limit` is how many the runner can actually take right now;
+    // limit=0 means it is at capacity and only wants to hear about
+    // cancellations, so nothing is claimed and nothing is held open.
     if (method === "GET" && path === "/v1/work") {
-      const items = await longPoll(
-        res,
-        () => {
-          const batch = store.claimWork(worker.id);
-          return batch.length > 0 ? batch : null;
-        },
-        waitMs(url, config.longPollMs, 120_000),
-      );
-      send(res, 200, { work: items ?? [] });
+      const rawLimit = url.searchParams.get("limit");
+      const limit = rawLimit === null ? 5 : Number(rawLimit);
+      if (!Number.isInteger(limit) || limit < 0 || limit > 20) {
+        throw new HttpError(400, "limit must be an integer from 0 to 20");
+      }
+      const items =
+        limit === 0
+          ? []
+          : ((await longPoll(
+              res,
+              () => {
+                const batch = store.claimWork(worker.id, limit);
+                return batch.length > 0 ? batch : null;
+              },
+              waitMs(url, config.longPollMs, 120_000),
+            )) ?? []);
+      send(res, 200, { work: items, cancelled: store.cancelledFor(worker.id) });
       return;
     }
 

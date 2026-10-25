@@ -9,7 +9,11 @@ const USAGE = `ai-worker-manager admin CLI  (db: ${config.dbPath})
   worker ls
 
   profile add --worker <id> --label <l> --command <cmd>
-              [--args "--model opus"] [--env K=V]... [--credential <ref>]
+              [--launch-args "<path>/cli.js"] [--args "--model opus"]
+              [--env K=V]... [--credential <ref>]
+              launch-args go before our flags; use them when command is node,
+              which is how to run Claude Code on Windows. args go after, for
+              things like --model.
   profile ls [--worker <id>]
 
   project add --name <n> --worker <id> --path <abs> [--profile <id>] [--context "..."]
@@ -27,6 +31,7 @@ const { positionals, values } = parseArgs({
     label: { type: "string" },
     command: { type: "string" },
     args: { type: "string" },
+    "launch-args": { type: "string" },
     env: { type: "string", multiple: true },
     credential: { type: "string" },
     name: { type: "string" },
@@ -79,6 +84,9 @@ try {
       workerId: need(values.worker, "worker"),
       label: need(values.label, "label"),
       command: need(values.command, "command"),
+      launchArgs: values["launch-args"]
+        ? values["launch-args"].split(/\s+/).filter(Boolean)
+        : [],
       args: values.args ? values.args.split(/\s+/).filter(Boolean) : [],
       env,
       credentialRef: values.credential ?? null,
@@ -86,7 +94,8 @@ try {
     console.log(`profile: ${profile.id}`);
   } else if (group === "profile" && action === "ls") {
     for (const p of store.listProfiles(values.worker)) {
-      console.log(`${p.id}\t${p.command} ${p.args.join(" ")}\tcred=${p.credentialRef ?? "-"}`);
+      const invocation = [p.command, ...p.launchArgs, ...p.args].join(" ");
+      console.log(`${p.id}\t${invocation}\tcred=${p.credentialRef ?? "-"}`);
     }
   } else if (group === "project" && action === "add") {
     const project = store.registerProject({

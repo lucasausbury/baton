@@ -54,6 +54,8 @@ export interface Profile {
   workerId: string;
   label: string;
   command: string;
+  /** Inserted immediately after the command, before any of our own flags. */
+  launchArgs: string[];
   args: string[];
   env: Record<string, string>;
   credentialRef: string | null;

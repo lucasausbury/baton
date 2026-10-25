@@ -39,6 +39,7 @@ function mapProfile(r: Row): Profile {
     workerId: str(r.worker_id),
     label: str(r.label),
     command: str(r.command),
+    launchArgs: JSON.parse(str(r.launch_args_json)) as string[],
     args: JSON.parse(str(r.args_json)) as string[],
     env: JSON.parse(str(r.env_json)) as Record<string, string>,
     credentialRef: strOrNull(r.credential_ref),
@@ -195,6 +196,7 @@ export class Store {
     workerId: string;
     label: string;
     command: string;
+    launchArgs?: string[];
     args?: string[];
     env?: Record<string, string>;
     credentialRef?: string | null;
@@ -203,14 +205,16 @@ export class Store {
     this.#db
       .prepare(
         `INSERT INTO profiles
-           (id, worker_id, label, command, args_json, env_json, credential_ref, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, worker_id, label, command, launch_args_json, args_json,
+            env_json, credential_ref, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
         input.workerId,
         input.label,
         input.command,
+        JSON.stringify(input.launchArgs ?? []),
         JSON.stringify(input.args ?? []),
         JSON.stringify(input.env ?? {}),
         input.credentialRef ?? null,
@@ -639,6 +643,22 @@ export class Store {
       n += Number(res.changes);
     }
     return n;
+  }
+
+  /**
+   * Sessions this worker was told to stop. The runner intersects these with
+   * what it actually has live, so the server needs no idea what is running
+   * where.
+   */
+  cancelledFor(workerId: string, withinMs = 3_600_000): string[] {
+    const cutoff = new Date(Date.now() - withinMs).toISOString();
+    const rows = this.#db
+      .prepare(
+        `SELECT id FROM sessions
+          WHERE worker_id = ? AND state = 'cancelled' AND updated_at > ?`,
+      )
+      .all(workerId, cutoff) as Row[];
+    return rows.map((r) => str(r.id));
   }
 
   /** Sessions still blocked, for the reminder sweep. */

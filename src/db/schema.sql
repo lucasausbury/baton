@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS profiles (
   worker_id      TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
   label          TEXT NOT NULL,
   command        TEXT NOT NULL,
+  -- launch_args go before our own flags, so a profile can be "node cli.js";
+  -- args go after, for things like --model.
+  launch_args_json TEXT NOT NULL DEFAULT '[]',
   args_json      TEXT NOT NULL DEFAULT '[]',
   env_json       TEXT NOT NULL DEFAULT '{}',
   credential_ref TEXT,

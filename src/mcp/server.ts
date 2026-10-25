@@ -34,7 +34,7 @@ export function createMcpHandler(store: Store) {
     const parts = [
       `${s.title ?? "(untitled)"} - ${s.state}`,
       `project:  ${project.name} on ${s.workerId} (${project.path})`,
-      `profile:  ${profile.label} [${profile.command}${profile.args.length ? " " + profile.args.join(" ") : ""}]`,
+      `profile:  ${profile.label} [${[profile.command, ...profile.launchArgs, ...profile.args].join(" ")}]`,
       `session:  ${s.id}`,
       `runs:     ${s.runCount}, created ${ago(s.createdAt)}, updated ${ago(s.updatedAt)}`,
     ];
@@ -88,7 +88,10 @@ export function createMcpHandler(store: Store) {
             !w.lastSeenAt || Date.now() - new Date(w.lastSeenAt).getTime() > config.workerStaleMs;
           const profiles = store.listProfiles(w.id);
           const rows = profiles.length
-            ? profiles.map((p) => `    ${p.label} -> ${p.command} ${p.args.join(" ")}`.trimEnd())
+            ? profiles.map(
+                (p) =>
+                  `    ${p.label} -> ${[p.command, ...p.launchArgs, ...p.args].join(" ")}`.trimEnd(),
+              )
             : ["    (no profiles)"];
           return [
             `${w.id} (${w.platform ?? "?"}) - ${stale ? "OFFLINE" : "online"}, seen ${ago(w.lastSeenAt)}`,

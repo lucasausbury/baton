@@ -12,7 +12,9 @@
     "smoke": "node --no-warnings=ExperimentalWarning test/smoke.ts",
     "typecheck": "tsc --noEmit",
     "cli": "node --no-warnings=ExperimentalWarning src/cli.ts",
-    "api": "node --no-warnings=ExperimentalWarning test/api.ts"
+    "api": "node --no-warnings=ExperimentalWarning test/api.ts",
+    "runner-test": "node --no-warnings=ExperimentalWarning test/runner.ts",
+    "runner": "node --no-warnings=ExperimentalWarning src/runner/index.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
