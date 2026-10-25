@@ -1,0 +1,25 @@
+{
+  "name": "ai-worker-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Central queue and control plane for AI coding agents running on remote dev machines",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "server": "node --no-warnings=ExperimentalWarning src/index.ts",
+    "smoke": "node --no-warnings=ExperimentalWarning test/smoke.ts",
+    "typecheck": "tsc --noEmit",
+    "cli": "node --no-warnings=ExperimentalWarning src/cli.ts",
+    "api": "node --no-warnings=ExperimentalWarning test/api.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0"
+  }
+}
