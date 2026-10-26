@@ -301,6 +301,30 @@ await check("create_session warns when the worker looks offline", async () => {
   assert.match(out, /looks offline/);
 });
 
+await check("get_session stays inside the tool result limit", async () => {
+  const noisy = store.createSession({
+    project: "alexandria",
+    prompt: "Produce a great deal of output.",
+    title: "noisy",
+  });
+  store.claimWork(worker.id);
+  // ~400KB of log, well past the ~150,000-character cap on claude.ai.
+  for (let i = 0; i < 40; i++) {
+    store.appendOutput(noisy.id, `chunk ${i} ${"x".repeat(10_000)}`);
+  }
+  store.ask({ sessionId: noisy.id, kind: "question", body: "Should I keep going?" });
+
+  const out = await callText("get_session", { sessionId: noisy.id });
+  assert.ok(out.length < 150_000, `expected under 150k chars, got ${out.length}`);
+  assert.match(out, /older ones omitted/, "and says what it dropped");
+  assert.match(out, /WAITING ON YOU/, "the open ask survives truncation");
+  assert.match(out, /Should I keep going\?/);
+  assert.match(out, /chunk 39/, "the newest output is kept");
+  assert.ok(!out.includes("chunk 0 "), "the oldest is what goes");
+  store.reply({ sessionId: noisy.id, body: "no, stop" });
+  store.cancelSession(noisy.id);
+});
+
 await check("create_session says so when the profile is not the project's own", async () => {
   // A client's conventions arrive through their account, so an override is
   // allowed but must be visible before you walk away from it.

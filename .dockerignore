@@ -1,0 +1,10 @@
+node_modules/
+data/
+.git/
+.gitignore
+test/
+*.md
+.env
+.env.*
+!.env.example
+runner.config.json

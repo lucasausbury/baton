@@ -1,0 +1,41 @@
+# Two containers: the app, and Caddy in front of it for TLS.
+#
+# The app's port is deliberately not published to the host. Only Caddy is
+# reachable from the internet, so the only way in is over HTTPS -- which
+# matters because worker tokens, the admin token and your projects' code all
+# travel in those requests.
+services:
+  awm:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      AWM_DB: /data/awm.db
+      AWM_HOST: 0.0.0.0
+      AWM_PORT: "8787"
+    volumes:
+      - awm-data:/data
+    expose:
+      - "8787"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      AWM_DOMAIN: ${AWM_DOMAIN:?set AWM_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - awm
+
+volumes:
+  # The whole system's state is this one volume.
+  awm-data:
+  # Caddy's certificates; keep it so a restart does not re-issue them.
+  caddy-data:
+  caddy-config:

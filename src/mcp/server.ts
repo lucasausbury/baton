@@ -6,6 +6,14 @@ import { config } from "../config.ts";
 import { NotFound, StateError, type Session } from "../core/types.ts";
 import type { Store } from "../core/store.ts";
 
+/**
+ * claude.ai and Desktop cap a tool result at roughly 150,000 characters, and a
+ * long session's log will pass that. These leave room for the metadata and the
+ * open ask, which matter more than old output.
+ */
+const LOG_BUDGET_CHARS = 90_000;
+const MAX_MESSAGE_CHARS = 8_000;
+
 function ago(iso: string | null): string {
   if (!iso) return "never";
   const ms = Date.now() - new Date(iso).getTime();
@@ -52,12 +60,38 @@ export function createMcpHandler(store: Store) {
       );
     }
 
+    // A tool result is capped at roughly 150,000 characters on claude.ai and
+    // Desktop, and a long session's log will pass that. Keep the newest
+    // messages and say what was dropped: the metadata and the open ask above
+    // are the parts you cannot do without.
     const log = store.messages(s.id);
-    parts.push("", `--- log (${log.length} messages) ---`);
-    for (const m of log) {
+    const kept: string[] = [];
+    let used = 0;
+    let omitted = 0;
+    for (let i = log.length - 1; i >= 0; i--) {
+      const m = log[i]!;
       const who = m.direction === "in" ? "you" : "agent";
-      parts.push(`[${who}/${m.kind}] ${m.body}`);
+      const body = m.body.length > MAX_MESSAGE_CHARS
+        ? `${m.body.slice(0, MAX_MESSAGE_CHARS)}\n[... ${m.body.length - MAX_MESSAGE_CHARS} more characters]`
+        : m.body;
+      const line = `[${who}/${m.kind}] ${body}`;
+      if (used + line.length > LOG_BUDGET_CHARS) {
+        omitted = i + 1;
+        break;
+      }
+      kept.push(line);
+      used += line.length;
     }
+    kept.reverse();
+
+    parts.push(
+      "",
+      `--- log (${log.length} messages${omitted ? `, ${omitted} older ones omitted` : ""}) ---`,
+    );
+    if (omitted) {
+      parts.push(`[${omitted} earlier message(s) omitted; this shows the most recent]`);
+    }
+    parts.push(...kept);
     return parts.filter((p) => p !== "").join("\n");
   }
 

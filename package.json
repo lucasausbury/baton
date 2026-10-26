@@ -14,7 +14,8 @@
     "cli": "node --no-warnings=ExperimentalWarning src/cli.ts",
     "api": "node --no-warnings=ExperimentalWarning test/api.ts",
     "runner-test": "node --no-warnings=ExperimentalWarning test/runner.ts",
-    "runner": "node --no-warnings=ExperimentalWarning src/runner/index.ts"
+    "runner": "node --no-warnings=ExperimentalWarning src/runner/index.ts",
+    "backup": "node --no-warnings=ExperimentalWarning scripts/backup.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

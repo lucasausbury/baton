@@ -1,0 +1,26 @@
+{$AWM_DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy awm:8787 {
+		# Runners hold a request open while they wait for work, and an approval
+		# request can stay parked for hours. Any proxy timeout here would cut
+		# those off, so there are none.
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+
+		# MCP's streamable HTTP transport can respond over SSE. Buffering would
+		# hold those events until the response closed, so flush immediately.
+		flush_interval -1
+	}
+
+	log {
+		# The paths carry session ids but no secrets; tokens are in headers,
+		# which Caddy does not log.
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 3
+		}
+	}
+}
