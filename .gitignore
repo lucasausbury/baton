@@ -3,4 +3,13 @@ node_modules/
 *.db-wal
 *.db-shm
 data/
+
+# Secrets. runner.config.json holds a worker token and, for an API-key
+# profile, the key itself -- and the README tells you to create it right here
+# in the checkout, so one `git add -A` would otherwise commit it.
 .env
+.env.*
+!.env.example
+runner.config.json
+*.pem
+*.key
