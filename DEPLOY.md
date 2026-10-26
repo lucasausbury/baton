@@ -8,9 +8,12 @@ host, so the only way in is over HTTPS.
 
 - A Hetzner Cloud account.
 - A domain you can add a subdomain to.
-- This repository reachable from the server — push it to a private GitHub repo
-  (`gh repo create baton --private --source . --push`) or `rsync` it
-  across. It is not public and doesn't need to be.
+
+The repository is public at `github.com/lucasausbury/baton`, so the server
+clones it with no credentials and updates are a `git pull`. It holds no
+secrets: `.env` and `runner.config.json` are gitignored, and GitHub's secret
+scanning with push protection is on, so a credential that slips into a commit
+is blocked at push rather than discovered by a bot.
 
 ## 1. Provision the server
 
@@ -65,7 +68,7 @@ exit                                       # log back in for the group to apply
 
 ```bash
 sudo mkdir -p /opt/baton && sudo chown lucas:lucas /opt/baton
-git clone <your-repo> /opt/baton && cd /opt/baton
+git clone https://github.com/lucasausbury/baton.git /opt/baton && cd /opt/baton
 
 cp .env.example .env
 chmod 600 .env
