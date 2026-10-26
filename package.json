@@ -1,5 +1,5 @@
 {
-  "name": "ai-worker-manager",
+  "name": "baton",
   "version": "0.1.0",
   "private": true,
   "type": "module",

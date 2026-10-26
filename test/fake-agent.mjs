@@ -1,6 +1,6 @@
 // Stands in for `claude -p` in the runner tests. It records how it was spawned
 // so the test can assert on the argument list, then emits stream-json and exits
-// according to AWM_TEST_MODE.
+// according to BATON_TEST_MODE.
 import { writeFileSync } from "node:fs";
 
 const CREDENTIAL_VARS = [
@@ -12,7 +12,7 @@ const CREDENTIAL_VARS = [
   "CLAUDE_CONFIG_DIR",
 ];
 
-const out = process.env.AWM_TEST_ARGV_OUT;
+const out = process.env.BATON_TEST_ARGV_OUT;
 if (out) {
   const credentialEnv = {};
   for (const key of CREDENTIAL_VARS) {
@@ -30,7 +30,7 @@ if (out) {
 }
 
 const emit = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
-const mode = process.env.AWM_TEST_MODE ?? "ok";
+const mode = process.env.BATON_TEST_MODE ?? "ok";
 
 emit({ type: "system", subtype: "init", model: "fake-model" });
 emit({

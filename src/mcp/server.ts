@@ -97,7 +97,7 @@ export function createMcpHandler(store: Store) {
 
   function build(): McpServer {
     const server = new McpServer(
-      { name: "ai-worker-manager", version: "0.1.0" },
+      { name: "baton", version: "0.1.0" },
       {
         instructions:
           "Central queue for AI coding agents on remote dev machines. Creating a session " +

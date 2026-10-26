@@ -14,7 +14,7 @@ import { runAgent } from "../src/runner/agent.ts";
 import type { RunnerConfig } from "../src/runner/config.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dir = mkdtempSync(join(tmpdir(), "awm-runner-"));
+const dir = mkdtempSync(join(tmpdir(), "baton-runner-"));
 
 // The fake agent is spawned the same way Claude Code is on Windows: the real
 // binary there is a .cmd wrapper that cannot be launched without a shell, so a
@@ -40,7 +40,7 @@ function profileFor(label: string, mode: string) {
     command: fakeAgent,
     launchArgs: fakeAgentLaunchArgs,
     args: ["--model", "opus"],
-    env: { AWM_TEST_MODE: mode, AWM_TEST_ARGV_OUT: argvOut },
+    env: { BATON_TEST_MODE: mode, BATON_TEST_ARGV_OUT: argvOut },
   });
 }
 
@@ -114,7 +114,7 @@ await check("the agent is spawned with the right arguments", () => {
 
   const flag = (name: string): string | undefined => argv[argv.indexOf(name) + 1];
   assert.equal(flag("--output-format"), "stream-json");
-  assert.equal(flag("--permission-prompt-tool"), "mcp__awm__approve");
+  assert.equal(flag("--permission-prompt-tool"), "mcp__baton__approve");
   assert.equal(
     flag("--session-id"),
     okItem.session.id,
@@ -128,11 +128,11 @@ await check("the agent is spawned with the right arguments", () => {
   assert.ok(argv.includes("--model") && argv.includes("opus"));
 
   const mcp = JSON.parse(flag("--mcp-config") ?? "{}") as {
-    mcpServers: { awm: { args: string[]; env: Record<string, string> } };
+    mcpServers: { baton: { args: string[]; env: Record<string, string> } };
   };
-  assert.match(mcp.mcpServers.awm.args.at(-1) ?? "", /shim\.ts$/);
-  assert.equal(mcp.mcpServers.awm.env.AWM_SESSION, okItem.session.id);
-  assert.equal(mcp.mcpServers.awm.env.AWM_URL, base);
+  assert.match(mcp.mcpServers.baton.args.at(-1) ?? "", /shim\.ts$/);
+  assert.equal(mcp.mcpServers.baton.env.BATON_SESSION, okItem.session.id);
+  assert.equal(mcp.mcpServers.baton.env.BATON_URL, base);
 
   assert.equal(spawned.cwd.replace(/\\/g, "/"), dir.replace(/\\/g, "/"), "runs in the project dir");
 });
@@ -164,7 +164,7 @@ await check("a stray credential in the runner's own shell cannot hijack a profil
       label: "subscription",
       command: fakeAgent,
       launchArgs: fakeAgentLaunchArgs,
-      env: { AWM_TEST_MODE: "ok", AWM_TEST_ARGV_OUT: argvOut },
+      env: { BATON_TEST_MODE: "ok", BATON_TEST_ARGV_OUT: argvOut },
       credentialRef: "personal",
     });
     const item = newSession("proj-creds", profile.id, "Whose account am I?");
@@ -194,7 +194,7 @@ await check("an expired login is reported as a credential problem, with the fix"
     label: "expired",
     command: fakeAgent,
     launchArgs: fakeAgentLaunchArgs,
-    env: { AWM_TEST_MODE: "authfail", AWM_TEST_ARGV_OUT: argvOut },
+    env: { BATON_TEST_MODE: "authfail", BATON_TEST_ARGV_OUT: argvOut },
     credentialRef: "personal",
   });
   const item = newSession("proj-expired", profile.id, "Do some work.");
@@ -311,11 +311,11 @@ await shim.connect(
     args: ["--no-warnings=ExperimentalWarning", join(here, "..", "src", "runner", "shim.ts")],
     env: {
       ...(process.env as Record<string, string>),
-      AWM_SESSION: shimItem.session.id,
-      AWM_URL: base,
-      AWM_TOKEN: token,
-      AWM_ASK_LEG_MS: "4000",
-      AWM_ASK_TOTAL_MS: "20000",
+      BATON_SESSION: shimItem.session.id,
+      BATON_URL: base,
+      BATON_TOKEN: token,
+      BATON_ASK_LEG_MS: "4000",
+      BATON_ASK_TOTAL_MS: "20000",
     },
     stderr: "pipe",
   }),

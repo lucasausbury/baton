@@ -5,16 +5,16 @@
 # matters because worker tokens, the admin token and your projects' code all
 # travel in those requests.
 services:
-  awm:
+  baton:
     build: .
     restart: unless-stopped
     env_file: .env
     environment:
-      AWM_DB: /data/awm.db
-      AWM_HOST: 0.0.0.0
-      AWM_PORT: "8787"
+      BATON_DB: /data/baton.db
+      BATON_HOST: 0.0.0.0
+      BATON_PORT: "8787"
     volumes:
-      - awm-data:/data
+      - baton-data:/data
     expose:
       - "8787"
 
@@ -25,17 +25,17 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      AWM_DOMAIN: ${AWM_DOMAIN:?set AWM_DOMAIN in .env}
+      BATON_DOMAIN: ${BATON_DOMAIN:?set BATON_DOMAIN in .env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
-      - awm
+      - baton
 
 volumes:
   # The whole system's state is this one volume.
-  awm-data:
+  baton-data:
   # Caddy's certificates; keep it so a restart does not re-issue them.
   caddy-data:
   caddy-config:

@@ -21,16 +21,16 @@ import { ServerClient } from "./client.ts";
  * stderr, which the runner captures.
  */
 
-const SESSION = process.env.AWM_SESSION ?? "";
-const URL_ = process.env.AWM_URL ?? "";
-const TOKEN = process.env.AWM_TOKEN ?? "";
+const SESSION = process.env.BATON_SESSION ?? "";
+const URL_ = process.env.BATON_URL ?? "";
+const TOKEN = process.env.BATON_TOKEN ?? "";
 /** Per-request wait. The tool call outlives these; we just re-attach. */
-const LEG_MS = Number(process.env.AWM_ASK_LEG_MS ?? 10 * 60 * 1000);
+const LEG_MS = Number(process.env.BATON_ASK_LEG_MS ?? 10 * 60 * 1000);
 /** Total time before we give up and deny rather than hang forever. */
-const TOTAL_MS = Number(process.env.AWM_ASK_TOTAL_MS ?? 12 * 60 * 60 * 1000);
+const TOTAL_MS = Number(process.env.BATON_ASK_TOTAL_MS ?? 12 * 60 * 60 * 1000);
 
 if (!SESSION || !URL_ || !TOKEN) {
-  console.error("[shim] AWM_SESSION, AWM_URL and AWM_TOKEN are all required");
+  console.error("[shim] BATON_SESSION, BATON_URL and BATON_TOKEN are all required");
   process.exit(1);
 }
 
@@ -104,7 +104,7 @@ const asJson = (value: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value) }],
 });
 
-const server = new McpServer({ name: "awm", version: "0.1.0" });
+const server = new McpServer({ name: "baton", version: "0.1.0" });
 
 server.registerTool(
   "approve",

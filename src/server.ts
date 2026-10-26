@@ -93,7 +93,7 @@ export function buildServer(store: Store, db: Db, opts: BuildOptions = {}): Serv
       return {
         ok: false,
         status: 503,
-        error: "set AWM_ADMIN_TOKEN, or AWM_PUBLIC_URL with a password, before exposing /mcp",
+        error: "set BATON_ADMIN_TOKEN, or BATON_PUBLIC_URL with a password, before exposing /mcp",
         challenge: false,
       };
     }

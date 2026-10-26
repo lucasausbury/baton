@@ -27,7 +27,7 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-export function loadRunnerConfig(path = process.env.AWM_RUNNER_CONFIG ?? DEFAULT_PATH): RunnerConfig {
+export function loadRunnerConfig(path = process.env.BATON_RUNNER_CONFIG ?? DEFAULT_PATH): RunnerConfig {
   const file = resolve(path);
   let raw: unknown;
   try {
@@ -35,7 +35,7 @@ export function loadRunnerConfig(path = process.env.AWM_RUNNER_CONFIG ?? DEFAULT
   } catch (err) {
     fail(
       `cannot read ${file}: ${err instanceof Error ? err.message : String(err)}\n` +
-        `Create it with serverUrl, workerId and token, or point AWM_RUNNER_CONFIG at it.`,
+        `Create it with serverUrl, workerId and token, or point BATON_RUNNER_CONFIG at it.`,
     );
   }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {

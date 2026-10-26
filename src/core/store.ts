@@ -153,7 +153,7 @@ export class Store {
   /** Returns the worker and its token. The token is not recoverable later. */
   createWorker(name: string, platform?: string): { worker: Worker; token: string } {
     const id = slug(name);
-    const token = `awm_${randomUUID().replaceAll("-", "")}`;
+    const token = `baton_${randomUUID().replaceAll("-", "")}`;
     this.#db
       .prepare(
         `INSERT INTO workers (id, name, platform, token_hash, created_at)

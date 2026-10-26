@@ -9,7 +9,7 @@ host, so the only way in is over HTTPS.
 - A Hetzner Cloud account.
 - A domain you can add a subdomain to.
 - This repository reachable from the server — push it to a private GitHub repo
-  (`gh repo create ai-worker-manager --private --source . --push`) or `rsync` it
+  (`gh repo create baton --private --source . --push`) or `rsync` it
   across. It is not public and doesn't need to be.
 
 ## 1. Provision the server
@@ -27,12 +27,12 @@ it again.
 
 ## 2. Point DNS at it
 
-An `A` record for `awm.yourdomain.com` to the server's IPv4, and an `AAAA` to
+An `A` record for `baton.yourdomain.com` to the server's IPv4, and an `AAAA` to
 its IPv6 if you want it. Wait for it to resolve before step 5, because Caddy
 gets its certificate by being reachable on that name.
 
 ```bash
-dig +short awm.yourdomain.com
+dig +short baton.yourdomain.com
 ```
 
 ## 3. Lock it down
@@ -64,14 +64,14 @@ exit                                       # log back in for the group to apply
 ## 5. Deploy
 
 ```bash
-sudo mkdir -p /opt/awm && sudo chown lucas:lucas /opt/awm
-git clone <your-repo> /opt/awm && cd /opt/awm
+sudo mkdir -p /opt/baton && sudo chown lucas:lucas /opt/baton
+git clone <your-repo> /opt/baton && cd /opt/baton
 
 cp .env.example .env
 chmod 600 .env
-openssl rand -hex 32    # AWM_ADMIN_TOKEN
-openssl rand -hex 16    # AWM_NTFY_TOPIC -- see the note in .env.example
-$EDITOR .env            # fill in AWM_DOMAIN, the two secrets, AWM_PUBLIC_URL
+openssl rand -hex 32    # BATON_ADMIN_TOKEN
+openssl rand -hex 16    # BATON_NTFY_TOPIC -- see the note in .env.example
+$EDITOR .env            # fill in BATON_DOMAIN, the two secrets, BATON_PUBLIC_URL
 
 docker compose up -d --build
 docker compose logs -f   # watch Caddy get its certificate
@@ -80,8 +80,8 @@ docker compose logs -f   # watch Caddy get its certificate
 Check it:
 
 ```bash
-curl https://awm.yourdomain.com/healthz        # {"ok":true,"workers":0}
-curl -o /dev/null -w '%{http_code}\n' https://awm.yourdomain.com/v1/work   # 401
+curl https://baton.yourdomain.com/healthz        # {"ok":true,"workers":0}
+curl -o /dev/null -w '%{http_code}\n' https://baton.yourdomain.com/v1/work   # 401
 ```
 
 A 401 on `/v1/work` is correct — that endpoint needs a worker token.
@@ -91,14 +91,14 @@ A 401 on `/v1/work` is correct — that endpoint needs a worker token.
 **From Claude Code, this works today:**
 
 ```bash
-claude mcp add --transport http awm https://awm.yourdomain.com/mcp \
-  --header "Authorization: Bearer <AWM_ADMIN_TOKEN>"
+claude mcp add --transport http baton https://baton.yourdomain.com/mcp \
+  --header "Authorization: Bearer <BATON_ADMIN_TOKEN>"
 ```
 
 **From the Claude mobile and desktop apps,** add it as a custom connector:
 Settings → Connectors → Add custom connector, with the URL
-`https://awm.yourdomain.com/mcp`. Claude discovers that the server wants OAuth,
-sends you to a consent screen, and you enter `AWM_LOGIN_PASSWORD`. After that it
+`https://baton.yourdomain.com/mcp`. Claude discovers that the server wants OAuth,
+sends you to a consent screen, and you enter `BATON_LOGIN_PASSWORD`. After that it
 stays connected and refreshes its own token.
 
 The server is its own OAuth authorization server, which it has to be: a custom
@@ -122,8 +122,8 @@ aren't forced through OAuth on a machine where a header is simpler.
 On the server:
 
 ```bash
-cd /opt/awm
-docker compose exec awm node --no-warnings=ExperimentalWarning src/cli.ts \
+cd /opt/baton
+docker compose exec baton node --no-warnings=ExperimentalWarning src/cli.ts \
   worker add "MacBook Pro" --platform darwin
 ```
 
@@ -136,7 +136,7 @@ The whole system's state is one SQLite file, so a nightly online backup is the
 whole backup. `crontab -e`:
 
 ```cron
-0 3 * * * cd /opt/awm && docker compose exec -T awm node --no-warnings=ExperimentalWarning scripts/backup.ts >> /var/log/awm-backup.log 2>&1
+0 3 * * * cd /opt/baton && docker compose exec -T baton node --no-warnings=ExperimentalWarning scripts/backup.ts >> /var/log/baton-backup.log 2>&1
 ```
 
 That keeps the last 7 in `/data/backups` inside the volume, which protects you
@@ -144,7 +144,7 @@ from a bad migration or a careless delete but **not** from losing the server.
 For that, pull them off the box:
 
 ```cron
-30 3 * * * rsync -az -e ssh lucas@<ip>:/var/lib/docker/volumes/awm_awm-data/_data/backups/ ~/backups/awm/
+30 3 * * * rsync -az -e ssh lucas@<ip>:/var/lib/docker/volumes/baton_baton-data/_data/backups/ ~/backups/baton/
 ```
 
 Or enable Hetzner's own backups for the server (20% of its cost), which is the
@@ -153,7 +153,7 @@ lazy and probably correct answer.
 ## 9. Updating
 
 ```bash
-cd /opt/awm && git pull && docker compose up -d --build
+cd /opt/baton && git pull && docker compose up -d --build
 ```
 
 The database is on a named volume, so rebuilding the image never touches it.
@@ -163,10 +163,10 @@ The database is on a named volume, so rebuilding the image never touches it.
 | Symptom | Likely cause |
 | - | - |
 | Caddy won't get a certificate | DNS not resolving yet, or 80/443 blocked |
-| `/healthz` works, `/mcp` returns 503 | `AWM_ADMIN_TOKEN` is empty in `.env` |
+| `/healthz` works, `/mcp` returns 503 | `BATON_ADMIN_TOKEN` is empty in `.env` |
 | `/mcp` returns 401 | Token mismatch between `.env` and your client |
-| Runners connect then stall | Check `docker compose logs awm` for the reaper requeueing claims |
-| Notifications silent | `AWM_NTFY_TOPIC` unset — the server logs them instead |
+| Runners connect then stall | Check `docker compose logs baton` for the reaper requeueing claims |
+| Notifications silent | `BATON_NTFY_TOPIC` unset — the server logs them instead |
 
-`docker compose logs -f awm` and `docker compose logs -f caddy` are the two
+`docker compose logs -f baton` and `docker compose logs -f caddy` are the two
 places to look.

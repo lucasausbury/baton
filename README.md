@@ -1,4 +1,4 @@
-# ai-worker-manager
+# baton
 
 Central queue and control plane for AI coding agents running on remote dev
 machines. Managed from the Claude desktop and mobile apps over MCP — there is no
@@ -52,7 +52,7 @@ there is no build step and no native dependency).
 
 ```bash
 npm install
-AWM_ADMIN_TOKEN=$(openssl rand -hex 24) npm run server
+BATON_ADMIN_TOKEN=$(openssl rand -hex 24) npm run server
 ```
 
 Register a machine, a profile and a project:
@@ -72,27 +72,27 @@ The worker token is printed once and is not recoverable.
 
 | Variable | Default | Purpose |
 | - | - | - |
-| `AWM_DB` | `data/awm.db` | SQLite file; the whole system's state |
-| `AWM_PORT` / `AWM_HOST` | `8787` / `0.0.0.0` | Listen address |
-| `AWM_ADMIN_TOKEN` | — | Bearer token for `/mcp`; required unless bound to loopback |
-| `AWM_PUBLIC_URL` | — | Public origin; with a password, enables OAuth for the Claude apps |
-| `AWM_LOGIN_PASSWORD` | admin token | Password on the OAuth consent screen |
-| `AWM_NTFY_TOPIC` | — | ntfy topic for push; without it notifications are logged only |
-| `AWM_NTFY_URL` | `https://ntfy.sh` | Point at a self-hosted ntfy |
-| `AWM_PUBLIC_URL` | — | Attaches a click-through URL to pushes |
-| `AWM_APPROVAL_WAIT_MS` | 6h | How long an approval request may stay parked |
-| `AWM_BLOCKED_REMINDER_MS` | 20m | Re-notify about a session still blocked |
+| `BATON_DB` | `data/baton.db` | SQLite file; the whole system's state |
+| `BATON_PORT` / `BATON_HOST` | `8787` / `0.0.0.0` | Listen address |
+| `BATON_ADMIN_TOKEN` | — | Bearer token for `/mcp`; required unless bound to loopback |
+| `BATON_PUBLIC_URL` | — | Public origin; with a password, enables OAuth for the Claude apps |
+| `BATON_LOGIN_PASSWORD` | admin token | Password on the OAuth consent screen |
+| `BATON_NTFY_TOPIC` | — | ntfy topic for push; without it notifications are logged only |
+| `BATON_NTFY_URL` | `https://ntfy.sh` | Point at a self-hosted ntfy |
+| `BATON_PUBLIC_URL` | — | Attaches a click-through URL to pushes |
+| `BATON_APPROVAL_WAIT_MS` | 6h | How long an approval request may stay parked |
+| `BATON_BLOCKED_REMINDER_MS` | 20m | Re-notify about a session still blocked |
 
 ## Running a worker
 
-On each dev machine, create `runner.config.json` (or point `AWM_RUNNER_CONFIG`
+On each dev machine, create `runner.config.json` (or point `BATON_RUNNER_CONFIG`
 at one) and start the runner:
 
 ```json
 {
-  "serverUrl": "https://awm.example.com",
+  "serverUrl": "https://baton.example.com",
   "workerId": "macbook-pro",
-  "token": "awm_...",
+  "token": "baton_...",
   "maxConcurrent": 2,
   "credentials": {
     "personal": { "CLAUDE_CONFIG_DIR": "/Users/lucas/.claude-personal" },

@@ -11,7 +11,7 @@ import { buildServer } from "../src/server.ts";
 
 const ADMIN = "admin-token-for-tests";
 
-const dir = mkdtempSync(join(tmpdir(), "awm-api-"));
+const dir = mkdtempSync(join(tmpdir(), "baton-api-"));
 const db = openDb(join(dir, "api.db"));
 const store = new Store(db);
 
@@ -67,7 +67,7 @@ await check("health needs no token", async () => {
 });
 
 await check("a bad worker token is rejected", async () => {
-  const res = await api("/v1/work?wait=0", {}, "awm_nope");
+  const res = await api("/v1/work?wait=0", {}, "baton_nope");
   assert.equal(res.status, 401);
 });
 

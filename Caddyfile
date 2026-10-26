@@ -1,7 +1,7 @@
-{$AWM_DOMAIN} {
+{$BATON_DOMAIN} {
 	encode zstd gzip
 
-	reverse_proxy awm:8787 {
+	reverse_proxy baton:8787 {
 		# Runners hold a request open while they wait for work, and an approval
 		# request can stay parked for hours. Any proxy timeout here would cut
 		# those off, so there are none.

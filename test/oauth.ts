@@ -15,10 +15,10 @@ const ADMIN = "admin-token-for-tests";
 const PASSWORD = "correct horse battery staple";
 // Never dialled. The advertised origin has to be https, while the test talks to
 // the loopback address directly.
-const PUBLIC_URL = "https://awm.test";
+const PUBLIC_URL = "https://baton.test";
 const CALLBACK = "https://claude.ai/api/mcp/auth_callback";
 
-const dir = mkdtempSync(join(tmpdir(), "awm-oauth-"));
+const dir = mkdtempSync(join(tmpdir(), "baton-oauth-"));
 const db = openDb(join(dir, "oauth.db"));
 const store = new Store(db);
 
@@ -64,7 +64,7 @@ await check("an unauthenticated /mcp answers 401 with a metadata pointer", async
   assert.match(header, /^Bearer /);
   assert.match(
     header,
-    /resource_metadata="https:\/\/awm\.test\/\.well-known\/oauth-protected-resource\/mcp"/,
+    /resource_metadata="https:\/\/baton\.test\/\.well-known\/oauth-protected-resource\/mcp"/,
   );
 });
 
@@ -132,7 +132,7 @@ const authorizeUrl = (extra: Record<string, string> = {}): string => {
     code_challenge: challenge,
     code_challenge_method: "S256",
     state: "state-123",
-    scope: "awm",
+    scope: "baton",
     ...extra,
   };
   for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
@@ -145,7 +145,7 @@ await check("/authorize shows a consent screen, not a redirect", async () => {
   const res = await fetch(authorizeUrl(), { redirect: "manual" });
   assert.equal(res.status, 200);
   const html = await res.text();
-  assert.match(html, /Connect to ai-worker-manager/);
+  assert.match(html, /Connect to baton/);
   // The spec wants the redirect target's hostname shown clearly.
   assert.match(html, /claude\.ai/);
   assert.match(html, /full control of every registered worker/, "and says what is at stake");

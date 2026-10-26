@@ -19,9 +19,9 @@ COPY scripts ./scripts
 RUN mkdir -p /data && chown -R node:node /data /app
 USER node
 
-ENV AWM_DB=/data/awm.db \
-    AWM_HOST=0.0.0.0 \
-    AWM_PORT=8787
+ENV BATON_DB=/data/baton.db \
+    BATON_HOST=0.0.0.0 \
+    BATON_PORT=8787
 
 EXPOSE 8787
 

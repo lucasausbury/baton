@@ -10,15 +10,15 @@ import { config } from "../src/config.ts";
  *
  * The whole system's state is one file, so this is the whole backup.
  */
-const dir = process.env.AWM_BACKUP_DIR ?? "/data/backups";
-const keep = Number(process.env.AWM_BACKUP_KEEP ?? 7);
+const dir = process.env.BATON_BACKUP_DIR ?? "/data/backups";
+const keep = Number(process.env.BATON_BACKUP_KEEP ?? 7);
 
 mkdirSync(dir, { recursive: true });
 
 // Millisecond resolution, so a manual run right after the nightly one cannot
 // silently overwrite it. Colons are stripped to keep the name portable.
 const stamp = new Date().toISOString().replace(/[:.]/g, "-").replace(/Z$/, "");
-const target = join(dir, `awm-${stamp}.db`);
+const target = join(dir, `baton-${stamp}.db`);
 
 const db = new DatabaseSync(config.dbPath, { readOnly: true });
 try {
@@ -30,7 +30,7 @@ try {
 
 // Keep the most recent `keep` backups and drop the rest.
 const existing = readdirSync(dir)
-  .filter((name) => /^awm-.*\.db$/.test(name))
+  .filter((name) => /^baton-.*\.db$/.test(name))
   .map((name) => ({ name, mtime: statSync(join(dir, name)).mtimeMs }))
   .sort((a, b) => b.mtime - a.mtime);
 

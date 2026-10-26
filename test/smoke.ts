@@ -6,7 +6,7 @@ import { openDb } from "../src/db/index.ts";
 import { Store, type StoreEvent } from "../src/core/store.ts";
 import { StateError } from "../src/core/types.ts";
 
-const dir = mkdtempSync(join(tmpdir(), "awm-smoke-"));
+const dir = mkdtempSync(join(tmpdir(), "baton-smoke-"));
 const db = openDb(join(dir, "test.db"));
 const store = new Store(db);
 const events: StoreEvent[] = [];
@@ -33,7 +33,7 @@ check("worker gets a slug id", () => assert.equal(worker.id, "macbook-pro"));
 
 check("token authenticates", () => {
   assert.equal(store.authWorker(token)?.id, "macbook-pro");
-  assert.equal(store.authWorker("awm_wrong"), null);
+  assert.equal(store.authWorker("baton_wrong"), null);
 });
 
 const profile = store.createProfile({

@@ -289,13 +289,13 @@ export function runAgent(
 
   const mcpConfig = {
     mcpServers: {
-      awm: {
+      baton: {
         command: process.execPath,
         args: ["--no-warnings=ExperimentalWarning", SHIM],
         env: {
-          AWM_SESSION: session.id,
-          AWM_URL: config.serverUrl,
-          AWM_TOKEN: config.token,
+          BATON_SESSION: session.id,
+          BATON_URL: config.serverUrl,
+          BATON_TOKEN: config.token,
         },
       },
     },
@@ -313,7 +313,7 @@ export function runAgent(
     "--mcp-config",
     JSON.stringify(mcpConfig),
     "--permission-prompt-tool",
-    "mcp__awm__approve",
+    "mcp__baton__approve",
     "--append-system-prompt",
     systemPrompt(config.workerId),
     // The session row's id is the agent's own session id, so resuming needs no

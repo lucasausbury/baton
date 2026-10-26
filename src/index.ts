@@ -23,13 +23,13 @@ const reaper = setInterval(() => {
 reaper.unref();
 
 server.listen(config.httpPort, config.httpHost, () => {
-  console.log(`ai-worker-manager listening on ${config.httpHost}:${config.httpPort}`);
+  console.log(`baton listening on ${config.httpHost}:${config.httpPort}`);
   console.log(`  db:       ${config.dbPath}`);
   console.log(`  runners:  /v1/work  (worker bearer token)`);
   console.log(`  mcp:      /mcp      (${config.adminToken ? "admin token set" : "NO ADMIN TOKEN"})`);
   console.log(`  notify:   ${config.ntfyTopic ? `ntfy ${config.ntfyTopic}` : "console only"}`);
   if (!config.adminToken && !LOOPBACK.has(config.httpHost)) {
-    console.warn("  WARNING: /mcp is refusing requests until AWM_ADMIN_TOKEN is set.");
+    console.warn("  WARNING: /mcp is refusing requests until BATON_ADMIN_TOKEN is set.");
   }
 });
 

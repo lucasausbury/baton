@@ -3,7 +3,7 @@ import { openDb } from "./db/index.ts";
 import { Store } from "./core/store.ts";
 import { config } from "./config.ts";
 
-const USAGE = `ai-worker-manager admin CLI  (db: ${config.dbPath})
+const USAGE = `baton admin CLI  (db: ${config.dbPath})
 
   worker add <name> [--platform darwin|win32|linux]
   worker ls

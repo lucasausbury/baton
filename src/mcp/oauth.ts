@@ -26,7 +26,7 @@ const ACCESS_TTL_S = 60 * 60;
 const REFRESH_TTL_S = 30 * 24 * 60 * 60;
 const CODE_TTL_S = 120;
 const PENDING_TTL_S = 15 * 60;
-export const SCOPE = "awm";
+export const SCOPE = "baton";
 
 const sha256 = (value: string): string =>
   createHash("sha256").update(value, "utf8").digest("hex");
@@ -178,7 +178,7 @@ export class OAuthProvider implements OAuthServerProvider {
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connect to ai-worker-manager</title>
+<title>Connect to baton</title>
 <style>
   :root { color-scheme: light dark; --fg:#111; --bg:#fff; --muted:#666; --line:#d8d8d8; --accent:#1a6ae0; --bad:#b4232c; }
   @media (prefers-color-scheme: dark) {
@@ -201,7 +201,7 @@ export class OAuthProvider implements OAuthServerProvider {
   .warn { font-size:.875rem; }
 </style>
 </head><body><main>
-  <h1>Connect to ai-worker-manager</h1>
+  <h1>Connect to baton</h1>
   <p><b>${escapeHtml(name)}</b> is asking for access.</p>
   <div class="who">
     You will be sent back to <b>${escapeHtml(host)}</b>
@@ -543,7 +543,7 @@ export function createOAuthApp(opts: {
       provider,
       issuerUrl: issuer,
       resourceServerUrl: resource,
-      resourceName: "ai-worker-manager",
+      resourceName: "baton",
       scopesSupported: [SCOPE],
     }),
   );
