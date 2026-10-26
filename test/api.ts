@@ -301,6 +301,35 @@ await check("create_session warns when the worker looks offline", async () => {
   assert.match(out, /looks offline/);
 });
 
+await check("create_session says so when the profile is not the project's own", async () => {
+  // A client's conventions arrive through their account, so an override is
+  // allowed but must be visible before you walk away from it.
+  const alt = store.createProfile({
+    workerId: worker.id,
+    label: "haiku-cheap",
+    command: "claude",
+    args: ["--model", "haiku"],
+  });
+  const out = await callText("create_session", {
+    project: "alexandria",
+    prompt: "Tidy the imports.",
+    profile: alt.id,
+  });
+  assert.match(out, /Queued/);
+  assert.match(out, /Running under haiku-cheap/);
+  assert.match(out, /alexandria's usual opus-personal/);
+  assert.match(out, /skills and rules .*will not apply/i);
+});
+
+await check("and stays quiet when the project's own profile is used", async () => {
+  const out = await callText("create_session", {
+    project: "alexandria",
+    prompt: "Tidy the imports properly.",
+  });
+  assert.match(out, /Queued/);
+  assert.ok(!/Running under/.test(out), "no note when nothing was overridden");
+});
+
 await check("reply refuses a session that is not waiting", async () => {
   const out = await callText("reply", { sessionId: session.id, body: "hello?" });
   assert.match(out, /not waiting on anything/);

@@ -173,6 +173,7 @@ export function createMcpHandler(store: Store) {
         },
       },
       (args) => {
+        const project = store.getProject(args.project);
         const session = store.createSession({
           project: args.project,
           prompt: args.prompt,
@@ -180,14 +181,34 @@ export function createMcpHandler(store: Store) {
           profileId: args.profile,
         });
         const worker = store.getWorker(session.workerId);
+        const notes: string[] = [];
+
+        // A client's conventions -- brand voice, a design framework -- usually
+        // live in skills and rules attached to their account, so the profile is
+        // how those reach the agent. Overriding it is allowed, but it must not
+        // be silent: the work would come back ignoring their framework and that
+        // only shows up in review, after the run is spent.
+        if (project.defaultProfileId && session.profileId !== project.defaultProfileId) {
+          notes.push(
+            `Running under ${store.getProfile(session.profileId).label}, not ` +
+              `${project.name}'s usual ${store.getProfile(project.defaultProfileId).label}. ` +
+              `Account-level skills and rules for that project will not apply.`,
+          );
+        }
+
         const stale =
           !worker.lastSeenAt ||
           Date.now() - new Date(worker.lastSeenAt).getTime() > config.workerStaleMs;
+        if (stale) {
+          notes.push(
+            `${worker.id} was last seen ${ago(worker.lastSeenAt)}, so it looks offline. ` +
+              `The session will sit queued until its runner checks in.`,
+          );
+        }
+
         return text(
           `Queued ${session.id} on ${worker.id}.` +
-            (stale
-              ? `\n\nNote: ${worker.id} was last seen ${ago(worker.lastSeenAt)}, so it looks offline. The session will sit queued until its runner checks in.`
-              : ""),
+            (notes.length ? `\n\n${notes.map((n) => `Note: ${n}`).join("\n\n")}` : ""),
         );
       },
     );
