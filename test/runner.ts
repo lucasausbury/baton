@@ -26,7 +26,7 @@ const db = openDb(join(dir, "runner.db"));
 const store = new Store(db);
 const { worker, token } = store.createWorker("Test Box", process.platform);
 
-const server = buildServer(store, { adminToken: "x", host: "127.0.0.1" });
+const server = buildServer(store, db, { adminToken: "x", host: "127.0.0.1" });
 await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 const client = new ServerClient(base, token);

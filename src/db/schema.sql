@@ -82,3 +82,60 @@ CREATE INDEX IF NOT EXISTS idx_messages_undelivered
   ON messages(session_id, direction, delivered_at);
 CREATE INDEX IF NOT EXISTS idx_messages_unanswered
   ON messages(direction, answered_by);
+
+-- ---------------------------------------------------------------------------
+-- OAuth, so the Claude mobile and desktop apps can connect.
+--
+-- They add a remote MCP server as a custom connector, and a custom connector
+-- authenticates with OAuth, a static request header, or nothing. The static
+-- header type is in beta for a limited set of organizations, and the MCP
+-- authorization spec prohibits tokens in the URL -- so OAuth it is. There is
+-- exactly one user here, so "signing in" is proving you know one password.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  client_id     TEXT PRIMARY KEY,
+  metadata_json TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+
+-- An authorization that has been started but not yet proved. Everything the
+-- flow depends on is kept here rather than in form fields, so a browser cannot
+-- tamper with the redirect URI or the PKCE challenge between the two steps.
+CREATE TABLE IF NOT EXISTS oauth_pending (
+  id             TEXT PRIMARY KEY,
+  client_id      TEXT NOT NULL,
+  redirect_uri   TEXT NOT NULL,
+  code_challenge TEXT NOT NULL,
+  state          TEXT,
+  scopes_json    TEXT NOT NULL DEFAULT '[]',
+  resource       TEXT,
+  expires_at     TEXT NOT NULL,
+  created_at     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS oauth_codes (
+  code_hash      TEXT PRIMARY KEY,
+  client_id      TEXT NOT NULL,
+  redirect_uri   TEXT NOT NULL,
+  code_challenge TEXT NOT NULL,
+  scopes_json    TEXT NOT NULL DEFAULT '[]',
+  resource       TEXT,
+  expires_at     TEXT NOT NULL,
+  used_at        TEXT,
+  created_at     TEXT NOT NULL
+);
+
+-- Tokens are stored as hashes, like worker tokens: the database never holds a
+-- value that would let someone in.
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  token_hash  TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL CHECK (kind IN ('access','refresh')),
+  client_id   TEXT NOT NULL,
+  scopes_json TEXT NOT NULL DEFAULT '[]',
+  resource    TEXT,
+  expires_at  TEXT,
+  revoked_at  TEXT,
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_client ON oauth_tokens(client_id, kind);

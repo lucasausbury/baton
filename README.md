@@ -75,6 +75,8 @@ The worker token is printed once and is not recoverable.
 | `AWM_DB` | `data/awm.db` | SQLite file; the whole system's state |
 | `AWM_PORT` / `AWM_HOST` | `8787` / `0.0.0.0` | Listen address |
 | `AWM_ADMIN_TOKEN` | — | Bearer token for `/mcp`; required unless bound to loopback |
+| `AWM_PUBLIC_URL` | — | Public origin; with a password, enables OAuth for the Claude apps |
+| `AWM_LOGIN_PASSWORD` | admin token | Password on the OAuth consent screen |
 | `AWM_NTFY_TOPIC` | — | ntfy topic for push; without it notifications are logged only |
 | `AWM_NTFY_URL` | `https://ntfy.sh` | Point at a self-hosted ntfy |
 | `AWM_PUBLIC_URL` | — | Attaches a click-through URL to pushes |
@@ -176,7 +178,7 @@ project.
 
 ## Interfaces
 
-### MCP, at `/mcp` (admin bearer token)
+### MCP, at `/mcp` (admin bearer token, or OAuth)
 
 `list_workers`, `list_projects`, `register_project`, `create_session`,
 `list_sessions`, `get_session`, `reply`, `resume_session`, `cancel_session`,
@@ -185,6 +187,13 @@ project.
 There is deliberately no draft-and-approve step: you are already in a Claude
 conversation when you create a task, so the planning happens there and calling
 `create_session` *is* the sign-off.
+
+Claude Code connects with a static `Authorization` header. The Claude mobile and
+desktop apps can't — a custom connector takes OAuth, a static header (beta, for a
+limited set of organizations), or nothing, and the MCP authorization spec forbids
+a token in the URL. So the server is also its own OAuth authorization server,
+with Dynamic Client Registration, PKCE, and refresh-token rotation. With one
+user, signing in is proving you know one password. Both routes work at once.
 
 ### Runner REST, at `/v1` (worker bearer token)
 
@@ -207,6 +216,7 @@ request counts as a heartbeat.
 npm run smoke        # store and state machine, in-process
 npm run api          # the server over real HTTP, including a real MCP client
 npm run runner-test  # agent spawning, cancellation, and the shim over stdio
+npm run oauth-test   # the whole authorization flow, as Claude performs it
 npm run typecheck
 ```
 
@@ -225,6 +235,12 @@ mistakes live.
 - **Feeding operator messages to a live agent's stdin.** The server side exists
   (`/v1/sessions/:id/inbound`, `--input-format stream-json`) but nothing needs it
   yet, because approvals and questions both go out through the shim.
+- **Opt-in rate-limit fallback.** A profile could name a `fallbackProfileId` used
+  only when a run fails on a rate limit. It must stay opt-in and explicit: a
+  client's conventions arrive through their account, so a silent swap would
+  quietly produce work that ignores them. The detection half already exists —
+  `rate_limit` is one more category alongside the credential errors the runner
+  already recognises.
 
 ## One thing to verify on first real use
 

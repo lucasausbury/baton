@@ -10,7 +10,7 @@ const db = openDb();
 const store = new Store(db);
 attachNotifications(store);
 
-const server = buildServer(store);
+const server = buildServer(store, db);
 
 const reaper = setInterval(() => {
   try {

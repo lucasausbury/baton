@@ -95,27 +95,27 @@ claude mcp add --transport http awm https://awm.yourdomain.com/mcp \
   --header "Authorization: Bearer <AWM_ADMIN_TOKEN>"
 ```
 
-**From the Claude mobile and desktop apps, it does not yet.** Adding a remote
-MCP server there means adding it as a custom connector, and a custom connector
-authenticates in one of three ways: OAuth 2.0, a static credential in a request
-header, or nothing at all. The static-header option (`static_headers`) is
-documented as "Beta, for a limited set of organizations" — if your organization
-doesn't have it, the **Request headers** field simply isn't shown when you add
-the connector. Putting the token in the URL is not a way around this: the MCP
-authorization spec prohibits tokens in query strings, and the connector docs say
-explicitly never to accept one there.
+**From the Claude mobile and desktop apps,** add it as a custom connector:
+Settings → Connectors → Add custom connector, with the URL
+`https://awm.yourdomain.com/mcp`. Claude discovers that the server wants OAuth,
+sends you to a consent screen, and you enter `AWM_LOGIN_PASSWORD`. After that it
+stays connected and refreshes its own token.
 
-So the mobile path needs OAuth with Dynamic Client Registration, which is
-supported by default but is a real piece of work on this server: a `401` carrying
-a `WWW-Authenticate: Bearer resource_metadata=…` pointer, protected-resource and
-authorization-server metadata documents, a `/register` endpoint, PKCE S256, a
-token endpoint with refresh-token rotation, and `https://claude.ai/api/mcp/auth_callback`
-registered as a redirect URI. For a single-user server the "sign in" step can be
-a single password field, so it's tractable — just not free.
+The server is its own OAuth authorization server, which it has to be: a custom
+connector authenticates with OAuth, a static credential in a request header, or
+nothing. The static-header option is beta for a limited set of organizations —
+if yours doesn't have it, the **Request headers** field isn't shown at all — and
+the MCP authorization spec prohibits putting the token in the URL. With one user,
+"signing in" is proving you know one password.
 
-Until that exists, drive it from Claude Code on your laptop, and check whether
-your account sees the **Request headers** field when adding a custom connector.
-If it does, you can skip the OAuth work entirely.
+Both routes stay open. The admin token keeps working for Claude Code, so you
+aren't forced through OAuth on a machine where a header is simpler.
+
+> [!NOTE]
+>
+> The consent screen is the only thing standing between a stranger with your URL
+> and every machine you've registered. Failed attempts are rate limited to 10 per
+> 15 minutes per address, but pick a password worth that trust.
 
 ## 7. Register your machines
 

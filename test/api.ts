@@ -31,7 +31,7 @@ store.registerProject({
 });
 const other = store.createWorker("Windows Desktop", "win32");
 
-const server = buildServer(store, { adminToken: ADMIN, host: "127.0.0.1" });
+const server = buildServer(store, db, { adminToken: ADMIN, host: "127.0.0.1" });
 await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 

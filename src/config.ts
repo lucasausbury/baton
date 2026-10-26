@@ -40,5 +40,13 @@ export const config = {
   /** Shared secret for the MCP endpoint. Required unless bound to loopback. */
   adminToken: process.env.AWM_ADMIN_TOKEN ?? "",
 
+  /**
+   * Password for the OAuth consent screen, which is how the Claude mobile and
+   * desktop apps connect. Falls back to the admin token, though that is a
+   * 64-character hex string to type on a phone, so setting this is kinder.
+   */
+  loginPassword: process.env.AWM_LOGIN_PASSWORD ?? process.env.AWM_ADMIN_TOKEN ?? "",
+
+  /** Public HTTPS origin. OAuth cannot be offered without it. */
   publicUrl: process.env.AWM_PUBLIC_URL ?? "",
 } as const;
