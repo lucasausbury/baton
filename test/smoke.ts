@@ -240,6 +240,57 @@ check("the message log is the full history", () => {
   );
 });
 
+// -- editing and removing profiles --------------------------------------------
+
+const scratch = store.createProfile({
+  workerId: worker.id,
+  label: "scratch",
+  command: "claude",
+  args: ["--model", "haiku"],
+  credentialRef: "client-a",
+});
+
+check("re-adding a label replaces the profile outright", () => {
+  const again = store.createProfile({
+    workerId: worker.id,
+    label: "scratch",
+    command: "claude",
+    credentialRef: "client-b",
+  });
+  assert.equal(again.id, scratch.id, "the id is stable");
+  assert.equal(again.credentialRef, "client-b", "the credential is corrected");
+  assert.deepEqual(again.args, [], "and args left off are not quietly kept");
+  assert.equal(again.createdAt, scratch.createdAt, "but its age survives");
+  assert.equal(store.listProfiles(worker.id).filter((p) => p.id === scratch.id).length, 1);
+});
+
+check("an unused profile can be deleted", () => {
+  store.deleteProfile(scratch.id);
+  assert.throws(() => store.getProfile(scratch.id), /no profile/);
+});
+
+check("deleting an unknown profile says so", () =>
+  assert.throws(() => store.deleteProfile("macbook-pro:nope"), /no profile/));
+
+check("a profile a project defaults to cannot be deleted", () => {
+  assert.throws(
+    () => store.deleteProfile(profile.id),
+    (err: Error) => {
+      assert.match(err.message, /cannot delete/i);
+      assert.match(err.message, /alexandria/, "it names the project in the way");
+      assert.match(err.message, /same label/, "and points at the way to fix it instead");
+      return true;
+    },
+  );
+  assert.ok(store.getProfile(profile.id), "and it is still there");
+});
+
+check("a profile with sessions against it cannot be deleted", () => {
+  // alexandria's default is cleared, so only the session history is in the way.
+  db.prepare(`UPDATE projects SET default_profile_id = NULL WHERE name = 'alexandria'`).run();
+  assert.throws(() => store.deleteProfile(profile.id), /session/i);
+});
+
 db.close();
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n${passed} checks passed`);

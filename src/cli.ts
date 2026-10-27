@@ -9,12 +9,16 @@ const USAGE = `baton admin CLI  (db: ${config.dbPath})
   worker ls
 
   profile add --worker <id> --label <l> --command <cmd>
-              [--launch-args "<path>/cli.js"] [--args "--model opus"]
+              [--launch-args=<path>/cli.js] [--args="--model opus"]
               [--env K=V]... [--credential <ref>]
               launch-args go before our flags; use them when command is node,
               which is how to run Claude Code on Windows. args go after, for
               things like --model.
+              Re-adding an existing label REPLACES that profile outright, so
+              state it in full -- flags you leave off go back to their defaults.
   profile ls [--worker <id>]
+  profile rm <id>
+              Refused while a session or a project's default still points at it.
 
   project add --name <n> --worker <id> --path <abs> [--profile <id>] [--context "..."]
   project ls
@@ -23,7 +27,28 @@ const USAGE = `baton admin CLI  (db: ${config.dbPath})
 
 Everything else is driven from the Claude apps over MCP.`;
 
-const { positionals, values } = parseArgs({
+// parseArgs refuses a value that begins with a dash unless it is joined with an
+// equals sign -- and nearly every useful --args value begins with one. Left
+// alone that surfaces as an unhandled TypeError and a stack trace, so catch it
+// and say what to type instead.
+function parseCommandLine() {
+  try {
+    return parseArgs(PARSE_OPTIONS);
+  } catch (err) {
+    const code = err instanceof Error ? (err as { code?: string }).code : undefined;
+    if (code === "ERR_PARSE_ARGS_INVALID_OPTION_VALUE") {
+      console.error(
+        `${err instanceof Error ? err.message.split("\n")[0] : String(err)}\n\n` +
+          `Join the value to the flag with "=" when it starts with a dash:\n` +
+          `  --args="--model opus"      not  --args "--model opus"`,
+      );
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+const PARSE_OPTIONS = {
   allowPositionals: true,
   options: {
     platform: { type: "string" },
@@ -40,7 +65,9 @@ const { positionals, values } = parseArgs({
     context: { type: "string" },
     state: { type: "string" },
   },
-});
+} as const;
+
+const { positionals, values } = parseCommandLine();
 
 function need(value: string | undefined, flag: string): string {
   if (!value) {
@@ -97,6 +124,14 @@ try {
       const invocation = [p.command, ...p.launchArgs, ...p.args].join(" ");
       console.log(`${p.id}\t${invocation}\tcred=${p.credentialRef ?? "-"}`);
     }
+  } else if (group === "profile" && action === "rm") {
+    const id = rest[0];
+    if (!id) {
+      console.error("usage: profile rm <id>   (see `profile ls` for ids)");
+      process.exit(1);
+    }
+    store.deleteProfile(id);
+    console.log(`deleted ${id}`);
   } else if (group === "project" && action === "add") {
     const project = store.registerProject({
       name: need(values.name, "name"),

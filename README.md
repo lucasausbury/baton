@@ -60,7 +60,7 @@ Register a machine, a profile and a project:
 ```bash
 npm run cli -- worker add "MacBook Pro" --platform darwin
 npm run cli -- profile add --worker macbook-pro --label opus-personal \
-  --command claude --args "--model opus" --env CLAUDE_CONFIG_DIR=~/.claude-personal \
+  --command claude --args="--model opus" --env CLAUDE_CONFIG_DIR=~/.claude-personal \
   --credential personal
 npm run cli -- project add --name alexandria --worker macbook-pro \
   --path /Users/lucas/src/alexandria --profile macbook-pro:opus-personal
@@ -161,8 +161,8 @@ plus the CLI entry point:
 ```bash
 npm run cli -- profile add --worker windows-desktop --label opus-personal \
   --command "C:/Program Files/nodejs/node.exe" \
-  --launch-args "C:/Users/lucas/AppData/Roaming/npm/node_modules/@anthropic-ai/claude-code/cli.js" \
-  --args "--model opus"
+  --launch-args="C:/Users/lucas/AppData/Roaming/npm/node_modules/@anthropic-ai/claude-code/cli.js" \
+  --args="--model opus"
 ```
 
 `--launch-args` go before the runner's own flags; `--args` go after.
@@ -171,8 +171,8 @@ npm run cli -- profile add --worker windows-desktop --label opus-personal \
 
 A `-p` run starts in Manual mode, so anything needing approval reaches your
 phone. That is correct but can be chatty. Turn it down per profile with
-`--args`, for example `--args "--permission-mode acceptEdits"` or
-`--args "--allowedTools Read,Edit,Bash(git *)"`. The profile is the right place
+`--args`, for example `--args="--permission-mode acceptEdits"` or
+`--args="--allowedTools Read,Edit,Bash(git *)"`. The profile is the right place
 for this, since how much autonomy to grant depends on which account and which
 project.
 

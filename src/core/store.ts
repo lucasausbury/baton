@@ -207,7 +207,14 @@ export class Store {
         `INSERT INTO profiles
            (id, worker_id, label, command, launch_args_json, args_json,
             env_json, credential_ref, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           label = excluded.label,
+           command = excluded.command,
+           launch_args_json = excluded.launch_args_json,
+           args_json = excluded.args_json,
+           env_json = excluded.env_json,
+           credential_ref = excluded.credential_ref`,
       )
       .run(
         id,
@@ -236,6 +243,42 @@ export class Store {
           .all(workerId) as Row[])
       : (this.#db.prepare(`SELECT * FROM profiles ORDER BY worker_id, label`).all() as Row[]);
     return rows.map(mapProfile);
+  }
+
+  /**
+   * Removes a profile, but never one still in use.
+   *
+   * Sessions record the profile they ran under, and a project can name one as
+   * its default; both are real foreign keys, so SQLite would refuse anyway.
+   * Doing the check here means the answer says which rows are in the way
+   * instead of surfacing a constraint error. A profile that cannot be removed
+   * can still be corrected, because createProfile replaces in place.
+   */
+  deleteProfile(id: string): void {
+    this.getProfile(id); // throws NotFound if it never existed
+    const sessions = (
+      this.#db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE profile_id = ?`).get(id) as {
+        n: number;
+      }
+    ).n;
+    const projects = (
+      this.#db
+        .prepare(`SELECT name FROM projects WHERE default_profile_id = ? ORDER BY name`)
+        .all(id) as { name: string }[]
+    ).map((r) => r.name);
+
+    if (sessions > 0 || projects.length > 0) {
+      const blockers = [
+        sessions > 0 ? `${sessions} session${sessions === 1 ? "" : "s"} ran under it` : null,
+        projects.length > 0 ? `it is the default for ${projects.join(", ")}` : null,
+      ].filter((s) => s !== null);
+      throw new StateError(
+        `cannot delete profile ${id}: ${blockers.join(", and ")}. ` +
+          `Re-add it with the same label to correct it instead, or point those ` +
+          `projects at another profile first.`,
+      );
+    }
+    this.#db.prepare(`DELETE FROM profiles WHERE id = ?`).run(id);
   }
 
   // --------------------------------------------------------------- projects
