@@ -163,8 +163,11 @@ export function createMcpHandler(store: Store) {
       {
         title: "Register a project",
         description:
-          "Add or update a project. Re-registering an existing name updates it in place; " +
-          "omitted fields keep their current values.",
+          "Add or update a project. Re-registering an existing name updates it in place: " +
+          "worker and path are always overwritten with whatever you pass, while " +
+          "defaultProfile and context keep their current values when omitted. So read the " +
+          "project first if you only mean to change one field -- a wrong path is not an " +
+          "error, it silently repoints the project.",
         inputSchema: {
           name: z.string().describe("Short unique name, e.g. alexandria"),
           worker: z.string().describe("Worker id from list_workers"),
