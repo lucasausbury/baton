@@ -124,7 +124,7 @@ export function createMcpHandler(store: Store) {
           const rows = profiles.length
             ? profiles.map(
                 (p) =>
-                  `    ${p.label} -> ${[p.command, ...p.launchArgs, ...p.args].join(" ")}`.trimEnd(),
+                  `    ${p.label} [${p.id}] -> ${[p.command, ...p.launchArgs, ...p.args].join(" ")}`.trimEnd(),
               )
             : ["    (no profiles)"];
           return [
