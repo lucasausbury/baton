@@ -9,14 +9,15 @@
   },
   "scripts": {
     "server": "node --no-warnings=ExperimentalWarning src/index.ts",
-    "smoke": "node --no-warnings=ExperimentalWarning test/smoke.ts",
-    "typecheck": "tsc --noEmit",
-    "cli": "node --no-warnings=ExperimentalWarning src/cli.ts",
-    "api": "node --no-warnings=ExperimentalWarning test/api.ts",
-    "runner-test": "node --no-warnings=ExperimentalWarning test/runner.ts",
     "runner": "node --no-warnings=ExperimentalWarning src/runner/index.ts",
+    "cli": "node --no-warnings=ExperimentalWarning src/cli.ts",
     "backup": "node --no-warnings=ExperimentalWarning scripts/backup.ts",
-    "oauth-test": "node --no-warnings=ExperimentalWarning test/oauth.ts"
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && npm run test:smoke && npm run test:api && npm run test:runner && npm run test:oauth",
+    "test:smoke": "node --no-warnings=ExperimentalWarning test/smoke.ts",
+    "test:api": "node --no-warnings=ExperimentalWarning test/api.ts",
+    "test:runner": "node --no-warnings=ExperimentalWarning test/runner.ts",
+    "test:oauth": "node --no-warnings=ExperimentalWarning test/oauth.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

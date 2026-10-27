@@ -213,10 +213,15 @@ request counts as a heartbeat.
 ## Tests
 
 ```bash
-npm run smoke        # store and state machine, in-process
-npm run api          # the server over real HTTP, including a real MCP client
-npm run runner-test  # agent spawning, cancellation, and the shim over stdio
-npm run oauth-test   # the whole authorization flow, as Claude performs it
+npm test             # typecheck, then all four suites
+
+npm run test:smoke   # store and state machine, in-process
+npm run test:api     # the server over real HTTP, including a real MCP client
+npm run test:runner  # agent spawning, cancellation, and the shim over stdio
+npm run test:oauth   # the whole authorization flow, as Claude performs it
+
+# Every test script is namespaced, because "npm run runner" is not a test --
+# it starts a real runner that will claim real work from the real server.
 npm run typecheck
 ```
 
