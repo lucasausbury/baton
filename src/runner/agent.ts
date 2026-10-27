@@ -249,13 +249,40 @@ export function runAgent(
   config: RunnerConfig,
 ): RunningAgent {
   const { session, project, profile } = item;
+  /**
+   * A profile this runner cannot honour. Nothing is spawned, and the reason
+   * goes back as session output rather than only to this process's stderr --
+   * otherwise the failure is invisible from the Claude apps, which is where
+   * anyone would look.
+   */
+  const refuse = (message: string, code: number): RunningAgent => {
+    console.error(`[runner] ${message}`);
+    const done = (async () => {
+      try {
+        await client.sendOutput(session.id, `[${message}]`, "error");
+        await client.reportExit(session.id, code);
+      } catch (err) {
+        console.error(`[runner] could not report the bad profile for ${session.id}:`, err);
+      }
+    })();
+    return { sessionId: session.id, child: undefined, done, kill: () => undefined };
+  };
+
+  // A profile names a credential; the mapping to a real CLAUDE_CONFIG_DIR or
+  // API key lives only in this runner's config. When it is missing we must not
+  // fall through to whatever account happens to be signed in here. Naming a
+  // credential is precisely the claim that this work belongs to one account and
+  // not another, so running it on the ambient login is worse than not running
+  // it at all -- it would be silent, and wrong. 78 is sysexits EX_CONFIG.
   const credentialEnv = profile.credentialRef
     ? config.credentials[profile.credentialRef]
     : undefined;
   if (profile.credentialRef && !credentialEnv) {
-    console.error(
-      `[runner] profile ${profile.id} wants credential "${profile.credentialRef}", ` +
-        `which is not in this runner's config`,
+    return refuse(
+      `profile ${profile.id} wants credential "${profile.credentialRef}", which is not ` +
+        `in this runner's config. Refusing to run on the default account instead. Add ` +
+        `it to runner.config.json on this machine and restart the runner.`,
+      78,
     );
   }
 
@@ -265,26 +292,13 @@ export function runAgent(
   // `claude` on Windows is a .cmd wrapper, so point the profile at claude.exe
   // or at node with the CLI entry point in launchArgs.
   if (process.platform === "win32" && /\.(cmd|bat|ps1)$/i.test(profile.command)) {
-    const message =
-      `[profile ${profile.id} names ${profile.command}. Windows cannot launch a ` +
-      `.cmd/.bat safely without a shell, and this runner will not put your prompt ` +
-      `through one. Point command at claude.exe, or at node with the CLI's .js ` +
-      `entry point as the profile's launch args.]`;
-    console.error(`[runner] ${message}`);
-    const done = (async () => {
-      try {
-        await client.sendOutput(session.id, message, "error");
-        await client.reportExit(session.id, 126);
-      } catch (err) {
-        console.error(`[runner] could not report the bad profile for ${session.id}:`, err);
-      }
-    })();
-    return {
-      sessionId: session.id,
-      child: undefined,
-      done,
-      kill: () => undefined,
-    };
+    return refuse(
+      `profile ${profile.id} names ${profile.command}. Windows cannot launch a ` +
+        `.cmd/.bat safely without a shell, and this runner will not put your prompt ` +
+        `through one. Point command at claude.exe, or at node with the CLI's .js ` +
+        `entry point as the profile's launch args.`,
+      126,
+    );
   }
 
   const mcpConfig = {

@@ -245,6 +245,28 @@ await check("a missing binary fails the session instead of hanging", async () =>
   );
 });
 
+await check("a profile whose credential is missing is refused, not run on the default", async () => {
+  const bad = store.createProfile({
+    workerId: worker.id,
+    label: "unmapped-client",
+    command: fakeAgent,
+    launchArgs: fakeAgentLaunchArgs,
+    credentialRef: "client-a", // deliberately absent from runnerConfig.credentials
+  });
+  const item = newSession("proj-unmapped", bad.id, "Work for a client account.");
+  const agent = runAgent(item, client, runnerConfig);
+  await agent.done;
+
+  const session = store.getSession(item.session.id);
+  assert.equal(session.state, "failed");
+  assert.equal(session.exitCode, 78);
+  assert.equal(agent.child, undefined, "nothing was spawned");
+  const body = store.messages(session.id).map((m) => m.body).join("\n");
+  assert.match(body, /client-a/, "it names the credential it wanted");
+  assert.match(body, /default account/i, "and says what it refused to do");
+  assert.match(body, /runner\.config\.json/, "and where to fix it");
+});
+
 await check("a .cmd profile is refused with an explanation, not a shell", async () => {
   if (process.platform !== "win32") return; // the guard only applies on Windows
   const bad = store.createProfile({
