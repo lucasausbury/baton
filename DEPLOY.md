@@ -1,4 +1,4 @@
-# Deploying to Hetzner
+# Deploying baton
 
 The server is one small always-on process with a SQLite file. Two containers:
 the app, and Caddy in front for TLS. The app's port is never published to the
@@ -6,7 +6,7 @@ host, so the only way in is over HTTPS.
 
 ## Before you start
 
-- A Hetzner Cloud account.
+- A small Linux server with a public IP that you can SSH into. Any VPS will do.
 - A domain you can add a subdomain to.
 
 The repository is public at `github.com/lucasausbury/baton`, so the server
@@ -17,12 +17,15 @@ is blocked at push rather than discovered by a bot.
 
 ## 1. Provision the server
 
-Create a **CAX11** (shared Arm, 2 vCPU, 4GB, ~€4/month) with Ubuntu 24.04. Arm
-is the cheapest option and every image used here is multi-arch. Add your SSH key
-during creation.
+One vCPU and 1GB of RAM is plenty -- the smallest instance most providers sell
+is already more than this needs. The box only ever runs the control plane: it
+holds the queue, relays approvals and stores a SQLite file. The agents run on
+your own machines, so it needs no CPU to speak of and a few GB of disk.
 
-This box only ever runs the control plane. Agents run on your own machines, so
-it needs no CPU to speak of.
+The commands below assume Ubuntu 24.04. Any distribution with Docker works,
+with the obvious substitutions. Arm instances are usually cheaper and every
+image used here is multi-arch, so take one if your provider offers it. Add your
+SSH key when you create the instance.
 
 Build the image **on the server** rather than pushing one from your laptop —
 then the architecture matches whatever you provisioned and you never think about
@@ -42,32 +45,37 @@ dig +short baton.yourdomain.com
 
 ```bash
 ssh root@<ip>
-adduser --gecos "" lucas && usermod -aG sudo lucas
-rsync --archive --chown=lucas:lucas ~/.ssh /home/lucas
+adduser --gecos "" deploy && usermod -aG sudo deploy
+rsync --archive --chown=deploy:deploy ~/.ssh /home/deploy
 ufw default deny incoming && ufw default allow outgoing
 ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443/tcp
 ufw enable
 ```
 
+`deploy` is just a name -- use whatever you like, and substitute it in the
+commands from here on.
+
 Then disable password SSH in `/etc/ssh/sshd_config` (`PasswordAuthentication no`,
-`PermitRootLogin no`) and `systemctl restart ssh`. Reconnect as `lucas` before
+`PermitRootLogin no`) and `systemctl restart ssh`. Reconnect as `deploy` before
 closing the root session.
 
-Hetzner also has a firewall at the project level, which is worth setting to the
-same three ports as a second layer.
+Most providers also offer a firewall outside the machine itself -- a project or
+cloud firewall, a security group. Setting that to the same three ports is a
+worthwhile second layer, since it survives anything that goes wrong inside the
+box.
 
 ## 4. Install Docker
 
 ```bash
 curl -fsSL https://get.docker.com | sh    # Docker's own install script
-sudo usermod -aG docker lucas
+sudo usermod -aG docker deploy
 exit                                       # log back in for the group to apply
 ```
 
 ## 5. Deploy
 
 ```bash
-sudo mkdir -p /opt/baton && sudo chown lucas:lucas /opt/baton
+sudo mkdir -p /opt/baton && sudo chown deploy:deploy /opt/baton
 git clone https://github.com/lucasausbury/baton.git /opt/baton && cd /opt/baton
 
 cp .env.example .env
@@ -147,11 +155,11 @@ from a bad migration or a careless delete but **not** from losing the server.
 For that, pull them off the box:
 
 ```cron
-30 3 * * * rsync -az -e ssh lucas@<ip>:/var/lib/docker/volumes/baton_baton-data/_data/backups/ ~/backups/baton/
+30 3 * * * rsync -az -e ssh deploy@<ip>:/var/lib/docker/volumes/baton_baton-data/_data/backups/ ~/backups/baton/
 ```
 
-Or enable Hetzner's own backups for the server (20% of its cost), which is the
-lazy and probably correct answer.
+Or turn on your provider's own snapshots or backups for the whole server, which
+is the lazy and probably correct answer.
 
 ## 9. Updating
 

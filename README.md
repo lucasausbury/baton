@@ -63,7 +63,7 @@ npm run cli -- profile add --worker macbook-pro --label opus-personal \
   --command claude --args="--model opus" --env CLAUDE_CONFIG_DIR=~/.claude-personal \
   --credential personal
 npm run cli -- project add --name alexandria --worker macbook-pro \
-  --path /Users/lucas/src/alexandria --profile macbook-pro:opus-personal
+  --path /Users/you/src/alexandria --profile macbook-pro:opus-personal
 ```
 
 The worker token is printed once and is not recoverable.
@@ -95,7 +95,7 @@ at one) and start the runner:
   "token": "baton_...",
   "maxConcurrent": 2,
   "credentials": {
-    "personal": { "CLAUDE_CONFIG_DIR": "/Users/lucas/.claude-personal" },
+    "personal": { "CLAUDE_CONFIG_DIR": "/Users/you/.claude-personal" },
     "client-acme": { "ANTHROPIC_API_KEY": "sk-ant-..." }
   }
 }
@@ -127,7 +127,7 @@ CLAUDE_CONFIG_DIR=~/.claude-personal claude     # log in, then quit
 CLAUDE_CONFIG_DIR=~/.claude-client-acme claude  # log in, then quit
 ```
 
-Then `"personal": { "CLAUDE_CONFIG_DIR": "/Users/lucas/.claude-personal" }`.
+Then `"personal": { "CLAUDE_CONFIG_DIR": "/Users/you/.claude-personal" }`.
 
 **Subscription login without a browser.** `claude setup-token` mints a one-year
 OAuth token on a machine you can log in from; put it in a credential as
@@ -161,7 +161,7 @@ plus the CLI entry point:
 ```bash
 npm run cli -- profile add --worker windows-desktop --label opus-personal \
   --command "C:/Program Files/nodejs/node.exe" \
-  --launch-args="C:/Users/lucas/AppData/Roaming/npm/node_modules/@anthropic-ai/claude-code/cli.js" \
+  --launch-args="C:/Users/you/AppData/Roaming/npm/node_modules/@anthropic-ai/claude-code/cli.js" \
   --args="--model opus"
 ```
 

@@ -26,7 +26,7 @@ const profile = store.createProfile({
 store.registerProject({
   name: "alexandria",
   workerId: worker.id,
-  path: "/Users/lucas/src/alexandria",
+  path: "/Users/you/src/alexandria",
   defaultProfileId: profile.id,
 });
 const other = store.createWorker("Windows Desktop", "win32");

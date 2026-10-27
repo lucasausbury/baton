@@ -57,7 +57,7 @@ check("profile round-trips args and env", () => {
 const project = store.registerProject({
   name: "alexandria",
   workerId: worker.id,
-  path: "/Users/lucas/src/alexandria",
+  path: "/Users/you/src/alexandria",
   defaultProfileId: profile.id,
   context: "Rust, uses nextest.",
 });
@@ -66,10 +66,10 @@ check("register is idempotent and updates path", () => {
   const again = store.registerProject({
     name: "alexandria",
     workerId: worker.id,
-    path: "/Users/lucas/src/alexandria2",
+    path: "/Users/you/src/alexandria2",
   });
   assert.equal(again.id, project.id);
-  assert.equal(again.path, "/Users/lucas/src/alexandria2");
+  assert.equal(again.path, "/Users/you/src/alexandria2");
   // COALESCE keeps values the second call omitted.
   assert.equal(again.defaultProfileId, profile.id);
   assert.equal(again.context, "Rust, uses nextest.");
@@ -117,7 +117,7 @@ check("claim hands over one item with its prompt", () => {
   assert.equal(item.session.state, "running");
   assert.equal(item.resume, false);
   assert.match(item.prompt, /nextest config/);
-  assert.equal(item.project.path, "/Users/lucas/src/alexandria2");
+  assert.equal(item.project.path, "/Users/you/src/alexandria2");
   assert.equal(item.profile.command, "claude");
 });
 

@@ -49,7 +49,7 @@ const runnerConfig: RunnerConfig = {
   workerId: worker.id,
   token,
   maxConcurrent: 2,
-  credentials: { personal: { CLAUDE_CONFIG_DIR: "/home/lucas/.claude-personal" } },
+  credentials: { personal: { CLAUDE_CONFIG_DIR: "/home/you/.claude-personal" } },
   retrySeconds: 1,
 };
 
@@ -157,7 +157,7 @@ await check("a stray credential in the runner's own shell cannot hijack a profil
   // has one exported, and an inherited CLAUDE_CONFIG_DIR would be just as bad.
   process.env.ANTHROPIC_API_KEY = "sk-ant-leaked-from-the-shell";
   process.env.CLAUDE_CODE_OAUTH_TOKEN = "stale-token";
-  process.env.CLAUDE_CONFIG_DIR = "/home/lucas/.claude-some-other-account";
+  process.env.CLAUDE_CONFIG_DIR = "/home/you/.claude-some-other-account";
   try {
     const profile = store.createProfile({
       workerId: worker.id,
@@ -176,7 +176,7 @@ await check("a stray credential in the runner's own shell cannot hijack a profil
 
     assert.equal(
       seen.CLAUDE_CONFIG_DIR,
-      "/home/lucas/.claude-personal",
+      "/home/you/.claude-personal",
       "the profile's account wins, not the one the runner inherited",
     );
     assert.ok(!("ANTHROPIC_API_KEY" in seen), "an inherited API key must not reach the agent");
@@ -206,7 +206,7 @@ await check("an expired login is reported as a credential problem, with the fix"
   assert.match(body, /credential problem/i, "it is not just another failure");
   assert.match(
     body,
-    /CLAUDE_CONFIG_DIR=\/home\/lucas\/\.claude-personal claude \/login/,
+    /CLAUDE_CONFIG_DIR=\/home\/you\/\.claude-personal claude \/login/,
     "and names the exact command for that account",
   );
   assert.match(body, new RegExp(worker.id), "on the right machine");
