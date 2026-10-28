@@ -195,6 +195,23 @@ a token in the URL. So the server is also its own OAuth authorization server,
 with Dynamic Client Registration, PKCE, and refresh-token rotation. With one
 user, signing in is proving you know one password. Both routes work at once.
 
+### Session page, at `/s/<id>` (login password)
+
+A read-only page for one session: its state, the profile and worker it ran on,
+any open question, and the output. It is where a push notification points, so
+that tapping one shows you the session instead of dropping you into an app with
+a conversation to steer.
+
+It is signed in with the same `BATON_LOGIN_PASSWORD` as the consent screen,
+since it grants the same sight of your projects' work, and it is rate limited
+the same way. Signing in sets an `HttpOnly` cookie holding nothing but an
+expiry and an HMAC of it, so there is no table to sweep and changing the
+password invalidates every outstanding cookie. Nothing on the page writes:
+answering an open question still happens through MCP.
+
+Without a login password the route is off and says so, rather than falling
+through to the runner API and its misleading 401.
+
 ### Runner REST, at `/v1` (worker bearer token)
 
 | Route | Purpose |
@@ -231,7 +248,8 @@ mistakes live.
 
 ## Not built yet
 
-- **A read-only status page**, for glancing at the queue without starting a
+- **A queue overview page.** `/s/<id>` shows one session; there is still no
+  page that lists them, for glancing at everything in flight without starting a
   conversation.
 - **`defer` for very long waits.** A parked agent is cheap but not free. A
   `PreToolUse` hook can return `defer`, which lets the process exit and resume

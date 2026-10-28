@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import express, { type Express, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
@@ -18,6 +18,7 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { Db } from "../db/index.ts";
+import { escapeHtml, sameSecret, sha256 } from "../core/web.ts";
 import { nowIso } from "../db/index.ts";
 
 type Row = Record<string, unknown>;
@@ -28,30 +29,13 @@ const CODE_TTL_S = 120;
 const PENDING_TTL_S = 15 * 60;
 export const SCOPE = "baton";
 
-const sha256 = (value: string): string =>
-  createHash("sha256").update(value, "utf8").digest("hex");
-
 const secret = (): string => randomBytes(32).toString("base64url");
-
-/** Compares digests so neither length nor content leaks through timing. */
-function sameSecret(given: string, expected: string): boolean {
-  const a = Buffer.from(sha256(given), "hex");
-  const b = Buffer.from(sha256(expected), "hex");
-  return timingSafeEqual(a, b);
-}
 
 const iso = (secondsFromNow: number): string =>
   new Date(Date.now() + secondsFromNow * 1000).toISOString();
 
 const expired = (at: string | null): boolean =>
   at !== null && new Date(at).getTime() <= Date.now();
-
-const escapeHtml = (s: string): string =>
-  s.replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
-  );
 
 /**
  * Loopback redirects have to match without the port, because Claude Code binds

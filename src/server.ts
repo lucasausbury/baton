@@ -6,6 +6,7 @@ import type { Store } from "./core/store.ts";
 import { createRunnerHandler, readJson, send } from "./http/server.ts";
 import { createMcpHandler } from "./mcp/server.ts";
 import { createOAuthApp, type OAuthApp } from "./mcp/oauth.ts";
+import { createSessionPage, type SessionPage } from "./http/page.ts";
 
 export const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -48,6 +49,10 @@ export function buildServer(store: Store, db: Db, opts: BuildOptions = {}): Serv
 
   const runner = createRunnerHandler(store);
   const mcp = createMcpHandler(store);
+
+  const page: SessionPage | undefined = loginPassword
+    ? createSessionPage({ store, password: loginPassword })
+    : undefined;
 
   let oauth: OAuthApp | undefined;
   let resourceMetadataUrl = "";
@@ -116,6 +121,18 @@ export function buildServer(store: Store, db: Db, opts: BuildOptions = {}): Serv
     // Express owns these; everything else stays on the plain handler.
     if (oauth && oauth.owns(path)) {
       oauth.app(req, res);
+      return;
+    }
+
+    // The read-only session page, which is where a push notification points.
+    if (path === "/s" || path.startsWith("/s/")) {
+      if (!page) {
+        send(res, 503, {
+          error: "set BATON_LOGIN_PASSWORD to enable the session page",
+        });
+        return;
+      }
+      page.app(req, res);
       return;
     }
 
