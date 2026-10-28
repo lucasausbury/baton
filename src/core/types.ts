@@ -62,6 +62,23 @@ export interface Profile {
   createdAt: string;
 }
 
+/**
+ * What Claude Code accepts for --permission-mode, plus "default" for our own
+ * "pass no flag at all". Checked before a project is stored, so a typo surfaces
+ * when you set it rather than as a failed run hours later.
+ */
+export const PERMISSION_MODES = [
+  "default",
+  "acceptEdits",
+  "auto",
+  "manual",
+  "dontAsk",
+  "plan",
+  "bypassPermissions",
+] as const;
+
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
 export interface Project {
   id: string;
   name: string;
@@ -69,6 +86,12 @@ export interface Project {
   path: string;
   defaultProfileId: string | null;
   context: string | null;
+  /** null means we pass nothing and Claude Code uses its own default. */
+  permissionMode: PermissionMode | null;
+  /** Tool patterns that never become a permission prompt, e.g. "Bash(git *)". */
+  allowedTools: string[];
+  /** Tool patterns refused outright, whatever the mode says. */
+  deniedTools: string[];
   createdAt: string;
   archivedAt: string | null;
 }

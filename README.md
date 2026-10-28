@@ -85,8 +85,31 @@ The worker token is printed once and is not recoverable.
 
 ## Running a worker
 
-On each dev machine, create `runner.config.json` (or point `BATON_RUNNER_CONFIG`
-at one) and start the runner:
+On the machine itself:
+
+```bash
+npm run enroll -- --server https://baton.example.com
+```
+
+The wizard asks what this machine is, finds Claude Code on it, asks which
+accounts it has and which projects live here, and asks per project how much its
+agents may do without asking you. Then it registers the lot in one call and
+writes `runner.config.json` itself.
+
+The worker token goes from the server straight into that file without ever
+being displayed, which is the point: copying one off a terminal and carrying it
+to another machine was the worst part of adding one. Re-enrolling a machine you
+are rebuilding takes `--replace`, which issues a new token and stops the old
+one working.
+
+Enrollment authenticates with `BATON_LOGIN_PASSWORD`. That password already
+grants full control through MCP, so this gives it nothing new, and it is rate
+limited the same way the consent screen is.
+
+### The config it writes
+
+You can also write `runner.config.json` by hand (or point `BATON_RUNNER_CONFIG`
+at one elsewhere), which is what the wizard is doing for you:
 
 ```json
 {
@@ -169,12 +192,39 @@ npm run cli -- profile add --worker windows-desktop --label opus-personal \
 
 ### Controlling how much it asks you
 
-A `-p` run starts in Manual mode, so anything needing approval reaches your
-phone. That is correct but can be chatty. Turn it down per profile with
-`--args`, for example `--args="--permission-mode acceptEdits"` or
-`--args="--allowedTools Read,Edit,Bash(git *)"`. The profile is the right place
-for this, since how much autonomy to grant depends on which account and which
-project.
+A `-p` run starts in Manual mode, where almost everything needs approval. Left
+alone that is relentless: a small task becomes dozens of notifications, and a
+session that stays blocked nags you again every twenty minutes.
+
+So permissions are a property of the **project**, not the profile. A profile is
+per account and shared across everything on a machine, while how much autonomy
+to grant depends on whose code it is — a client's repo and a scratch repo
+deserve different answers.
+
+The wizard offers three postures, and `project add` sets them directly:
+
+| Posture | What runs unattended |
+| - | - |
+| Ask me about everything | Nothing. Safest, and by far the most notifications |
+| Let it edit files, ask before commands | Edits, reads, searches, and read-only git and test commands |
+| Trust it, but block what cannot be undone | Everything except deleting, pushing, publishing, installing and fetching |
+
+```bash
+npm run cli -- project add --name alexandria --worker macbook-pro \
+  --path /Users/you/src/alexandria \
+  --permission-mode acceptEdits \
+  --allow Read --allow "Bash(git status*)" --deny "Bash(rm *)"
+```
+
+These become `--permission-mode`, `--allowedTools` and `--disallowedTools` on
+the agent's own command line, so **Claude Code resolves them itself**. Anything
+allowed never becomes a permission request, never reaches the shim, and never
+reaches your phone — which is cheaper and safer than a second matcher of ours
+deciding what was meant.
+
+They are also settable from the Claude app through `register_project`, which is
+where you would actually want to loosen something mid-task. Project settings are
+applied after the profile's own `--args`, so a project wins a disagreement.
 
 ## Interfaces
 

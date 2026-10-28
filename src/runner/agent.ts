@@ -334,6 +334,16 @@ export function runAgent(
     // extra bookkeeping.
     ...(item.resume ? ["--resume", session.id] : ["--session-id", session.id]),
     ...profile.args,
+    // The project's permissions come last so they win over a profile's args.
+    // A profile is per account and shared across everything on this machine;
+    // the project is the actual work, and is what the operator set deliberately.
+    // Anything allowed here never reaches the shim at all, which is the point:
+    // Claude Code resolves it, so there is no round trip to a phone.
+    ...(project.permissionMode && project.permissionMode !== "default"
+      ? ["--permission-mode", project.permissionMode]
+      : []),
+    ...(project.allowedTools.length > 0 ? ["--allowedTools", ...project.allowedTools] : []),
+    ...(project.deniedTools.length > 0 ? ["--disallowedTools", ...project.deniedTools] : []),
   ];
 
   const resolvedEnv = agentEnv(profile.env, credentialEnv);

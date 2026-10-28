@@ -245,6 +245,66 @@ await check("a missing binary fails the session instead of hanging", async () =>
   );
 });
 
+await check("a project's permissions reach the agent's command line", async () => {
+  store.registerProject({
+    name: "proj-perms",
+    workerId: worker.id,
+    path: dir,
+    defaultProfileId: profileFor("perms", "ok").id,
+    permissionMode: "acceptEdits",
+    allowedTools: ["Read", "Bash(git status*)"],
+    deniedTools: ["Bash(rm *)"],
+  });
+  store.createSession({ project: "proj-perms", prompt: "Check the permissions." });
+  const item = store.claimWork(worker.id).find((w) => w.project.name === "proj-perms");
+  assert.ok(item);
+  const agent = runAgent(item, client, runnerConfig);
+  await agent.done;
+
+  const argv = (JSON.parse(readFileSync(argvOut, "utf8")) as { argv: string[] }).argv;
+  const after = (flag: string): string[] => {
+    const at = argv.indexOf(flag);
+    if (at === -1) return [];
+    const out: string[] = [];
+    for (let i = at + 1; i < argv.length; i++) {
+      const value = argv[i];
+      if (value === undefined || value.startsWith("--")) break;
+      out.push(value);
+    }
+    return out;
+  };
+
+  assert.equal(argv[argv.indexOf("--permission-mode") + 1], "acceptEdits");
+  assert.deepEqual(after("--allowedTools"), ["Read", "Bash(git status*)"]);
+  assert.deepEqual(after("--disallowedTools"), ["Bash(rm *)"]);
+
+  // The profile still pins the model; the project only adds permissions.
+  assert.ok(argv.includes("--model"), "the profile's own args survive");
+  assert.ok(
+    argv.lastIndexOf("--permission-mode") > argv.indexOf("--model"),
+    "the project comes after the profile, so it wins a disagreement",
+  );
+});
+
+await check("a project with no permissions set adds no flags", async () => {
+  store.registerProject({
+    name: "proj-plain",
+    workerId: worker.id,
+    path: dir,
+    defaultProfileId: profileFor("plain-perms", "ok").id,
+  });
+  store.createSession({ project: "proj-plain", prompt: "No permissions here." });
+  const item = store.claimWork(worker.id).find((w) => w.project.name === "proj-plain");
+  assert.ok(item);
+  const agent = runAgent(item, client, runnerConfig);
+  await agent.done;
+
+  const argv = (JSON.parse(readFileSync(argvOut, "utf8")) as { argv: string[] }).argv;
+  assert.ok(!argv.includes("--permission-mode"), "nothing is invented");
+  assert.ok(!argv.includes("--allowedTools"));
+  assert.ok(!argv.includes("--disallowedTools"));
+});
+
 await check("a profile whose credential is missing is refused, not run on the default", async () => {
   const bad = store.createProfile({
     workerId: worker.id,

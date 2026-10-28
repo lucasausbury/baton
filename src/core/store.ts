@@ -4,9 +4,11 @@ import { nowIso } from "../db/index.ts";
 import {
   canTransition,
   NotFound,
+  PERMISSION_MODES,
   StateError,
   type Message,
   type MessageKind,
+  type PermissionMode,
   type Profile,
   type Project,
   type Session,
@@ -47,6 +49,12 @@ function mapProfile(r: Row): Profile {
   };
 }
 
+const jsonArray = (value: unknown): string[] => {
+  if (typeof value !== "string" || value === "") return [];
+  const parsed: unknown = JSON.parse(value);
+  return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
+};
+
 function mapProject(r: Row): Project {
   return {
     id: str(r.id),
@@ -55,6 +63,9 @@ function mapProject(r: Row): Project {
     path: str(r.path),
     defaultProfileId: strOrNull(r.default_profile_id),
     context: strOrNull(r.context),
+    permissionMode: strOrNull(r.permission_mode) as Project["permissionMode"],
+    allowedTools: jsonArray(r.allowed_tools_json),
+    deniedTools: jsonArray(r.denied_tools_json),
     createdAt: str(r.created_at),
     archivedAt: strOrNull(r.archived_at),
   };
@@ -281,25 +292,136 @@ export class Store {
     this.#db.prepare(`DELETE FROM profiles WHERE id = ?`).run(id);
   }
 
+  /**
+   * Sets up a whole machine in one transaction: the worker, its profiles, and
+   * the projects that live on it.
+   *
+   * It is one call because the alternative is a wizard that asks a dozen
+   * questions and then fails halfway, leaving a worker with no profile and a
+   * token already spent. Either the machine is enrolled or nothing happened.
+   */
+  enroll(input: {
+    name: string;
+    platform?: string;
+    replace?: boolean;
+    profiles?: {
+      label: string;
+      command: string;
+      launchArgs?: string[];
+      args?: string[];
+      env?: Record<string, string>;
+      credentialRef?: string | null;
+    }[];
+    projects?: {
+      name: string;
+      path: string;
+      profileLabel?: string | null;
+      context?: string | null;
+      permissionMode?: PermissionMode | null;
+      allowedTools?: string[] | null;
+      deniedTools?: string[] | null;
+    }[];
+  }): { worker: Worker; token: string; profileIds: string[]; projectNames: string[] } {
+    return this.#tx(() => {
+      const id = slug(input.name);
+      const already = this.#db.prepare(`SELECT id FROM workers WHERE id = ?`).get(id);
+      if (already && !input.replace) {
+        throw new StateError(
+          `worker ${id} is already registered. Re-run with replace to issue it a new ` +
+            `token -- which stops the old one working, so only do that for a machine ` +
+            `you are setting up again.`,
+        );
+      }
+      if (already) {
+        // Rotating rather than deleting: sessions and projects reference this
+        // worker, and the point of re-enrolling is to keep them.
+        const token = `baton_${randomUUID().replaceAll("-", "")}`;
+        this.#db
+          .prepare(`UPDATE workers SET name = ?, platform = ?, token_hash = ? WHERE id = ?`)
+          .run(input.name, input.platform ?? null, hashToken(token), id);
+        return this.#enrollRest(id, token, input);
+      }
+      const { worker, token } = this.createWorker(input.name, input.platform);
+      return this.#enrollRest(worker.id, token, input);
+    });
+  }
+
+  #enrollRest(
+    workerId: string,
+    token: string,
+    input: Parameters<Store["enroll"]>[0],
+  ): { worker: Worker; token: string; profileIds: string[]; projectNames: string[] } {
+    const byLabel = new Map<string, string>();
+    for (const p of input.profiles ?? []) {
+      const profile = this.createProfile({ ...p, workerId });
+      byLabel.set(p.label, profile.id);
+    }
+    for (const project of input.projects ?? []) {
+      const profileId =
+        project.profileLabel == null ? null : (byLabel.get(project.profileLabel) ?? null);
+      if (project.profileLabel != null && profileId === null) {
+        throw new StateError(
+          `project ${project.name} names profile "${project.profileLabel}", which is not one of the profiles being enrolled`,
+        );
+      }
+      this.registerProject({
+        name: project.name,
+        workerId,
+        path: project.path,
+        defaultProfileId: profileId,
+        context: project.context ?? null,
+        permissionMode: project.permissionMode ?? null,
+        allowedTools: project.allowedTools ?? null,
+        deniedTools: project.deniedTools ?? null,
+      });
+    }
+    return {
+      worker: this.getWorker(workerId),
+      token,
+      profileIds: [...byLabel.values()],
+      projectNames: (input.projects ?? []).map((p) => p.name),
+    };
+  }
+
   // --------------------------------------------------------------- projects
 
+  /**
+   * Adds or updates a project.
+   *
+   * worker and path always overwrite -- they identify the checkout, and a
+   * half-updated project pointing at the wrong machine is worse than a verbose
+   * call. Everything else keeps its current value when omitted, so changing one
+   * setting does not silently clear the rest.
+   */
   registerProject(input: {
     name: string;
     workerId: string;
     path: string;
     defaultProfileId?: string | null;
     context?: string | null;
+    permissionMode?: PermissionMode | null;
+    allowedTools?: string[] | null;
+    deniedTools?: string[] | null;
   }): Project {
+    if (input.permissionMode != null && !PERMISSION_MODES.includes(input.permissionMode)) {
+      throw new StateError(
+        `unknown permission mode ${JSON.stringify(input.permissionMode)}; use one of ${PERMISSION_MODES.join(", ")}`,
+      );
+    }
     this.#db
       .prepare(
         `INSERT INTO projects
-           (id, name, worker_id, path, default_profile_id, context, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+           (id, name, worker_id, path, default_profile_id, context,
+            permission_mode, allowed_tools_json, denied_tools_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, '[]'), COALESCE(?, '[]'), ?)
          ON CONFLICT(name) DO UPDATE SET
            worker_id = excluded.worker_id,
            path = excluded.path,
            default_profile_id = COALESCE(excluded.default_profile_id, projects.default_profile_id),
            context = COALESCE(excluded.context, projects.context),
+           permission_mode = COALESCE(excluded.permission_mode, projects.permission_mode),
+           allowed_tools_json = COALESCE(?, projects.allowed_tools_json),
+           denied_tools_json = COALESCE(?, projects.denied_tools_json),
            archived_at = NULL`,
       )
       .run(
@@ -309,7 +431,22 @@ export class Store {
         input.path,
         input.defaultProfileId ?? null,
         input.context ?? null,
+        input.permissionMode ?? null,
+        input.allowedTools === undefined || input.allowedTools === null
+          ? null
+          : JSON.stringify(input.allowedTools),
+        input.deniedTools === undefined || input.deniedTools === null
+          ? null
+          : JSON.stringify(input.deniedTools),
         nowIso(),
+        // Repeated for the ON CONFLICT branch, which cannot see excluded
+        // values that were never inserted as themselves.
+        input.allowedTools === undefined || input.allowedTools === null
+          ? null
+          : JSON.stringify(input.allowedTools),
+        input.deniedTools === undefined || input.deniedTools === null
+          ? null
+          : JSON.stringify(input.deniedTools),
       );
     return this.getProject(input.name);
   }

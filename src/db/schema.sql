@@ -34,6 +34,13 @@ CREATE TABLE IF NOT EXISTS projects (
   path               TEXT NOT NULL,
   default_profile_id TEXT REFERENCES profiles(id),
   context            TEXT,
+  -- How much this project's agents may do without asking. Enforced by Claude
+  -- Code itself rather than by our shim: a tool that is allowed here never
+  -- becomes a permission prompt, so it costs no round trip and there is no
+  -- second matcher of ours to get subtly wrong.
+  permission_mode    TEXT,
+  allowed_tools_json TEXT NOT NULL DEFAULT '[]',
+  denied_tools_json  TEXT NOT NULL DEFAULT '[]',
   created_at         TEXT NOT NULL,
   archived_at        TEXT
 );

@@ -7,6 +7,7 @@ import { createRunnerHandler, readJson, send } from "./http/server.ts";
 import { createMcpHandler } from "./mcp/server.ts";
 import { createOAuthApp, type OAuthApp } from "./mcp/oauth.ts";
 import { createSessionPage, type SessionPage } from "./http/page.ts";
+import { createEnrollApp, type EnrollApp } from "./http/enroll.ts";
 
 export const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -52,6 +53,9 @@ export function buildServer(store: Store, db: Db, opts: BuildOptions = {}): Serv
 
   const page: SessionPage | undefined = loginPassword
     ? createSessionPage({ store, password: loginPassword })
+    : undefined;
+  const enroll: EnrollApp | undefined = loginPassword
+    ? createEnrollApp({ store, password: loginPassword })
     : undefined;
 
   let oauth: OAuthApp | undefined;
@@ -121,6 +125,19 @@ export function buildServer(store: Store, db: Db, opts: BuildOptions = {}): Serv
     // Express owns these; everything else stays on the plain handler.
     if (oauth && oauth.owns(path)) {
       oauth.app(req, res);
+      return;
+    }
+
+    // Enrollment authenticates with the login password, not a worker token,
+    // so it has to be handled before the runner handler demands one.
+    if (path === "/v1/enroll") {
+      if (!enroll) {
+        send(res, 503, {
+          error: "set BATON_LOGIN_PASSWORD to enable machine enrollment",
+        });
+        return;
+      }
+      enroll.app(req, res);
       return;
     }
 

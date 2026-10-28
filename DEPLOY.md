@@ -130,16 +130,19 @@ aren't forced through OAuth on a machine where a header is simpler.
 
 ## 7. Register your machines
 
-On the server:
+On each worker machine, not on the server:
 
 ```bash
-cd /opt/baton
-docker compose exec baton node --no-warnings=ExperimentalWarning src/cli.ts \
-  worker add "MacBook Pro" --platform darwin
+npm run enroll -- --server https://baton.yourdomain.com
 ```
 
-Copy the token it prints — it isn't recoverable. Then add a profile and a
-project, and set up the worker as described in the README.
+It asks for the login password, works out what the machine has, asks what each
+project may do unattended, and writes `runner.config.json` itself. The worker
+token never passes through you.
+
+There is still `cli.ts worker add` on the server if you want to register a
+machine without touching it, but then you have to carry the token across
+yourself — it is printed once and is not recoverable.
 
 ## 8. Backups
 

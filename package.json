@@ -10,15 +10,17 @@
   "scripts": {
     "server": "node --no-warnings=ExperimentalWarning src/index.ts",
     "runner": "node --no-warnings=ExperimentalWarning src/runner/index.ts",
+    "enroll": "node --no-warnings=ExperimentalWarning src/enroll.ts",
     "cli": "node --no-warnings=ExperimentalWarning src/cli.ts",
     "backup": "node --no-warnings=ExperimentalWarning scripts/backup.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run test:smoke && npm run test:api && npm run test:page && npm run test:runner && npm run test:oauth",
+    "test": "npm run typecheck && npm run test:smoke && npm run test:api && npm run test:page && npm run test:enroll && npm run test:runner && npm run test:oauth",
     "test:smoke": "node --no-warnings=ExperimentalWarning test/smoke.ts",
     "test:api": "node --no-warnings=ExperimentalWarning test/api.ts",
     "test:runner": "node --no-warnings=ExperimentalWarning test/runner.ts",
     "test:oauth": "node --no-warnings=ExperimentalWarning test/oauth.ts",
-    "test:page": "node --no-warnings=ExperimentalWarning test/page.ts"
+    "test:page": "node --no-warnings=ExperimentalWarning test/page.ts",
+    "test:enroll": "node --no-warnings=ExperimentalWarning test/enroll.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

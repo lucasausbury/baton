@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { openDb } from "./db/index.ts";
 import { Store } from "./core/store.ts";
 import { config } from "./config.ts";
+import type { PermissionMode, Project } from "./core/types.ts";
 
 const USAGE = `baton admin CLI  (db: ${config.dbPath})
 
@@ -21,6 +22,13 @@ const USAGE = `baton admin CLI  (db: ${config.dbPath})
               Refused while a session or a project's default still points at it.
 
   project add --name <n> --worker <id> --path <abs> [--profile <id>] [--context "..."]
+              [--permission-mode <m>] [--allow <pattern>]... [--deny <pattern>]...
+              permission-mode is one of default, acceptEdits, auto, manual,
+              dontAsk, plan, bypassPermissions. allow and deny take Claude Code
+              tool patterns, e.g. --allow "Bash(git *)" --allow Read. Anything
+              allowed here never becomes an approval on your phone.
+              worker and path always overwrite; everything else is kept when
+              you leave it off, so you can change one setting at a time.
   project ls
 
   session ls [--state blocked]
@@ -64,10 +72,21 @@ const PARSE_OPTIONS = {
     profile: { type: "string" },
     context: { type: "string" },
     state: { type: "string" },
+    "permission-mode": { type: "string" },
+    allow: { type: "string", multiple: true },
+    deny: { type: "string", multiple: true },
   },
 } as const;
 
 const { positionals, values } = parseCommandLine();
+
+/** One line describing what a project's agents may do unattended. */
+function describePermissions(p: Project): string {
+  const parts = [`mode=${p.permissionMode ?? "default"}`];
+  if (p.allowedTools.length > 0) parts.push(`allow=${p.allowedTools.join(" ")}`);
+  if (p.deniedTools.length > 0) parts.push(`deny=${p.deniedTools.join(" ")}`);
+  return parts.join("  ");
+}
 
 function need(value: string | undefined, flag: string): string {
   if (!value) {
@@ -139,11 +158,16 @@ try {
       path: need(values.path, "path"),
       defaultProfileId: values.profile ?? null,
       context: values.context ?? null,
+      permissionMode: (values["permission-mode"] ?? null) as PermissionMode | null,
+      allowedTools: values.allow ?? null,
+      deniedTools: values.deny ?? null,
     });
     console.log(`project: ${project.name} -> ${project.workerId}:${project.path}`);
+    console.log(`  permissions: ${describePermissions(project)}`);
   } else if (group === "project" && action === "ls") {
     for (const p of store.listProjects()) {
       console.log(`${p.name}\t${p.workerId}:${p.path}\tprofile=${p.defaultProfileId ?? "-"}`);
+      console.log(`  ${describePermissions(p)}`);
     }
   } else if (group === "session" && action === "ls") {
     const sessions = store.listSessions({

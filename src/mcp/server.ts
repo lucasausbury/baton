@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { config } from "../config.ts";
-import { NotFound, StateError, type Session } from "../core/types.ts";
+import { NotFound, PERMISSION_MODES, StateError, type Session } from "../core/types.ts";
 import type { Store } from "../core/store.ts";
 
 /**
@@ -151,7 +151,14 @@ export function createMcpHandler(store: Store) {
             .map((p) => {
               const prof = p.defaultProfileId ? store.getProfile(p.defaultProfileId).label : "none";
               const ctx = p.context ? `\n    ${p.context}` : "";
-              return `${p.name} - ${p.workerId}:${p.path}\n    default profile: ${prof}${ctx}`;
+              const perms = [
+                `mode ${p.permissionMode ?? "default"}`,
+                p.allowedTools.length > 0 ? `allowed: ${p.allowedTools.join(", ")}` : null,
+                p.deniedTools.length > 0 ? `denied: ${p.deniedTools.join(", ")}` : null,
+              ]
+                .filter((s) => s !== null)
+                .join("; ");
+              return `${p.name} - ${p.workerId}:${p.path}\n    default profile: ${prof}\n    permissions: ${perms}${ctx}`;
             })
             .join("\n\n"),
         );
@@ -173,6 +180,24 @@ export function createMcpHandler(store: Store) {
           worker: z.string().describe("Worker id from list_workers"),
           path: z.string().describe("Absolute path to the checkout on that machine"),
           defaultProfile: z.string().optional().describe("Profile id to run by default"),
+          permissionMode: z
+            .enum(PERMISSION_MODES)
+            .optional()
+            .describe(
+              "How much the agent may do unattended. \"default\" passes nothing and " +
+                "Claude Code asks about almost everything, which is a lot of notifications.",
+            ),
+          allowedTools: z
+            .array(z.string())
+            .optional()
+            .describe(
+              "Tool patterns that never become an approval, e.g. [\"Read\", \"Bash(git *)\"]. " +
+                "Replaces the whole list; omit it to leave the current one alone.",
+            ),
+          deniedTools: z
+            .array(z.string())
+            .optional()
+            .describe("Tool patterns refused outright, whatever the mode allows."),
           context: z
             .string()
             .optional()
@@ -186,8 +211,20 @@ export function createMcpHandler(store: Store) {
           path: args.path,
           defaultProfileId: args.defaultProfile ?? null,
           context: args.context ?? null,
+          permissionMode: args.permissionMode ?? null,
+          allowedTools: args.allowedTools ?? null,
+          deniedTools: args.deniedTools ?? null,
         });
-        return text(`Registered ${project.name} on ${project.workerId} at ${project.path}.`);
+        const perms = [
+          `mode ${project.permissionMode ?? "default"}`,
+          project.allowedTools.length > 0 ? `allowed: ${project.allowedTools.join(", ")}` : null,
+          project.deniedTools.length > 0 ? `denied: ${project.deniedTools.join(", ")}` : null,
+        ]
+          .filter((s) => s !== null)
+          .join("; ");
+        return text(
+          `Registered ${project.name} on ${project.workerId} at ${project.path}.\nPermissions: ${perms}.`,
+        );
       },
     );
 
