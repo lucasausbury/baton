@@ -105,6 +105,23 @@ to another machine was the worst part of adding one. Re-enrolling a machine you
 are rebuilding takes `--replace`, which issues a new token and stops the old
 one working.
 
+**Nothing has to be typed twice.** Every answer is written to
+`runner.config.draft.json` beside the config as it is given, and the draft is
+removed only once the machine is registered and its real config written. If the
+server refuses, the network drops, or you stop halfway, running the wizard again
+offers to carry on from where it got to — it asks for the password, which is
+deliberately not in the draft, and goes straight to the review step. `--fresh`
+starts over instead.
+
+Tab completes directory names at every path question, and a path pasted from
+Windows Explorer works with its quotes still on. A project name that would
+collide with one already entered is refused there and then, rather than at the
+end: the server keys a project on `slug(name)`, so `My App` and `my-app` are
+the same project and cannot both exist.
+
+Before submitting, the wizard shows everything it is about to register and lets
+you add or remove projects until it is right.
+
 Enrollment authenticates with `BATON_LOGIN_PASSWORD`. That password already
 grants full control through MCP, so this gives it nothing new, and it is rate
 limited the same way the consent screen is.

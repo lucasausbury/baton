@@ -357,6 +357,71 @@ check("a misspelt posture is refused at the door", () => {
   assert.throws(() => store.getProject("typo"), /no project/i, "and nothing was written");
 });
 
+check("two names that reduce to one id are refused, by name", () => {
+  // This was a 500 that said only "enrollment failed", raised at the very end
+  // of the wizard after a dozen answers: projects.id is slug(name), and the
+  // upsert keyed on name, so the pair hit the primary key instead.
+  store.registerProject({ name: "my-app", workerId: worker.id });
+  assert.throws(
+    () => store.registerProject({ name: "My App", workerId: worker.id }),
+    (err: Error) => {
+      assert.ok(err instanceof StateError, "a StateError, so it comes back as a 409 and reads");
+      assert.match(err.message, /"My App"/, "it names what was just given");
+      assert.match(err.message, /"my-app"/, "and what is already there");
+      assert.match(err.message, /rename one/i, "and what to do");
+      return true;
+    },
+  );
+  assert.equal(store.getProject("my-app").name, "my-app", "and the existing one is untouched");
+});
+
+check("a colliding pair inside one enrolment names both halves", () => {
+  assert.throws(
+    () =>
+      store.enroll({
+        name: "Collide Box",
+        profiles: [{ label: "Personal" }],
+        projects: [
+          { name: "Brochure Site", profileLabel: "Personal" },
+          { name: "brochure-site", profileLabel: "Personal" },
+        ],
+      }),
+    (err: Error) => {
+      assert.ok(err instanceof StateError);
+      assert.match(err.message, /"Brochure Site"/);
+      assert.match(err.message, /"brochure-site"/);
+      return true;
+    },
+  );
+  assert.throws(() => store.getWorker("collide-box"), /no worker/i, "and nothing was created");
+});
+
+check("a project name with nothing to slug says which name", () => {
+  assert.throws(
+    () => store.registerProject({ name: "!!!", workerId: worker.id }),
+    (err: Error) => {
+      assert.ok(err instanceof StateError);
+      assert.match(err.message, /"!!!"/, "the old message named nothing at all");
+      assert.match(err.message, /letters or digits/i);
+      return true;
+    },
+  );
+});
+
+check("re-registering the same name still updates in place", () => {
+  // The upsert moved from ON CONFLICT(name) to ON CONFLICT(id); the ordinary
+  // case has to keep working.
+  const first = store.registerProject({
+    name: "steady",
+    workerId: worker.id,
+    context: "notes",
+  });
+  const again = store.registerProject({ name: "steady", workerId: worker.id });
+  assert.equal(again.id, first.id);
+  assert.equal(again.context, "notes", "and keeps what the second call left out");
+  assert.equal(store.listProjects().filter((p) => p.id === "steady").length, 1);
+});
+
 check("the stricter posture always wins", () => {
   assert.equal(stricter("ask", "trusted"), "ask");
   assert.equal(stricter("trusted", "ask"), "ask");

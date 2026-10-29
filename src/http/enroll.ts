@@ -102,8 +102,13 @@ export function createEnrollApp(opts: { store: Store; password: string }): Enrol
         res.status(409).json({ error: err.message });
         return;
       }
+      // The message, not a shrug. This endpoint is password-authenticated, and
+      // "enrollment failed" at the end of a dozen questions tells the operator
+      // nothing about which answer to change.
       console.error("[enroll] failed:", err);
-      res.status(500).json({ error: "enrollment failed" });
+      res.status(500).json({
+        error: `enrollment failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
   });
 

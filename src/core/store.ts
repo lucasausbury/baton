@@ -338,6 +338,23 @@ export class Store {
     token: string,
     input: Parameters<Store["enroll"]>[0],
   ): { worker: Worker; token: string; profileIds: string[]; projectNames: string[] } {
+    // Two names in the same batch that reduce to one id. Checked up front
+    // because the whole batch is one transaction: without this the first of the
+    // pair is attempted, the second fails, and the error names the row the
+    // caller just created rather than the two answers that disagree.
+    const byId = new Map<string, string>();
+    for (const project of input.projects ?? []) {
+      const id = this.#projectId(project.name);
+      const first = byId.get(id);
+      if (first !== undefined && first !== project.name) {
+        throw new StateError(
+          `projects "${first}" and "${project.name}" both reduce to the id "${id}", so they ` +
+            `cannot both be registered. Rename one of them.`,
+        );
+      }
+      byId.set(id, project.name);
+    }
+
     const byLabel = new Map<string, string>();
     for (const p of input.profiles ?? []) {
       const profile = this.createProfile({ ...p, workerId });
@@ -377,6 +394,22 @@ export class Store {
    * call. Everything else keeps its current value when omitted, so changing one
    * setting does not silently clear the rest.
    */
+  /**
+   * The id a project name becomes, with a message worth reading when it cannot
+   * become one. slug() alone says "cannot derive an id from", which tells the
+   * operator nothing about which of a dozen answers was the problem.
+   */
+  #projectId(name: string): string {
+    try {
+      return slug(name);
+    } catch {
+      throw new StateError(
+        `project name ${JSON.stringify(name)} has no letters or digits, so there is no id ` +
+          `to give it. Give it a name like "alexandria".`,
+      );
+    }
+  }
+
   registerProject(input: {
     name: string;
     workerId: string;
@@ -389,12 +422,31 @@ export class Store {
         `unknown posture ${JSON.stringify(input.requestedPosture)}; use one of ${POSTURES.join(", ")}`,
       );
     }
+    const id = this.#projectId(input.name);
+
+    // A project's id is slug(name), so two different names can want the same
+    // id -- "My App" and "my-app" do. The upsert below used to key on name, so
+    // that pair hit the primary key instead and came back as a bare SQLite
+    // constraint error: not a StateError, so the enrolment endpoint reported
+    // only "enrollment failed", at the end, after every question was answered.
+    // Merging two projects under one id silently would be worse, so say so.
+    const clash = this.#db.prepare(`SELECT name FROM projects WHERE id = ?`).get(id) as
+      | { name: string }
+      | undefined;
+    if (clash && clash.name !== input.name) {
+      throw new StateError(
+        `project "${input.name}" and the existing project "${clash.name}" both reduce to ` +
+          `the id "${id}", so they cannot both exist. Rename one of them.`,
+      );
+    }
+
     this.#db
       .prepare(
         `INSERT INTO projects
            (id, name, worker_id, default_profile_id, context, requested_posture, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(name) DO UPDATE SET
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
            worker_id = excluded.worker_id,
            default_profile_id = COALESCE(excluded.default_profile_id, projects.default_profile_id),
            context = COALESCE(excluded.context, projects.context),
@@ -402,7 +454,7 @@ export class Store {
            archived_at = NULL`,
       )
       .run(
-        slug(input.name),
+        id,
         input.name,
         input.workerId,
         input.defaultProfileId ?? null,

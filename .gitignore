@@ -13,3 +13,8 @@ data/
 runner.config.json
 *.pem
 *.key
+
+# The enrolment wizard's working file. Holds no password or token, but it
+# describes a machine's layout and has no business in a public repo.
+runner.config.draft.json
+managed-settings.json
