@@ -1,4 +1,4 @@
-import type { WorkItem } from "../core/types.ts";
+import type { WorkerInventory, WorkItem } from "../core/types.ts";
 
 export interface AskResult {
   askId: number;
@@ -57,6 +57,20 @@ export class ServerClient {
       waitMs + 20_000,
     )) as { work?: WorkItem[]; cancelled?: string[] };
     return { work: body.work ?? [], cancelled: body.cancelled ?? [] };
+  }
+
+  /**
+   * Tells the server what this machine has, for the lists in the Claude apps.
+   *
+   * Display only. The server stores it and never reads it back to launch
+   * anything, because the whole point of the config being here is that this
+   * machine is the authority on its own paths and postures.
+   */
+  async reportInventory(inventory: WorkerInventory): Promise<void> {
+    await this.#call(`/v1/inventory`, {
+      method: "POST",
+      body: JSON.stringify(inventory),
+    });
   }
 
   async markStarted(sessionId: string): Promise<void> {

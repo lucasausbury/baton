@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { openDb } from "../src/db/index.ts";
 import { Store, type StoreEvent } from "../src/core/store.ts";
 import { StateError } from "../src/core/types.ts";
+import { PERMISSION_PRESETS, sessionSettings, stricter } from "../src/core/permissions.ts";
+import { floorSettings, floorTarget } from "../src/core/managed.ts";
+import { cleanPath } from "../src/core/paths.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "baton-smoke-"));
 const db = openDb(join(dir, "test.db"));
@@ -37,44 +41,51 @@ check("token authenticates", () => {
   assert.equal(store.authWorker("baton_wrong"), null);
 });
 
-const profile = store.createProfile({
-  workerId: worker.id,
-  label: "opus-personal",
-  command: "claude",
-  args: ["--model", "opus"],
-  env: { CLAUDE_CONFIG_DIR: "~/.claude-personal" },
-  credentialRef: "personal",
-});
+const profile = store.createProfile({ workerId: worker.id, label: "opus-personal" });
 
 check("profile id namespaces by worker", () =>
   assert.equal(profile.id, "macbook-pro:opus-personal"));
 
-check("profile round-trips args and env", () => {
-  const got = store.getProfile(profile.id);
-  assert.deepEqual(got.args, ["--model", "opus"]);
-  assert.equal(got.env.CLAUDE_CONFIG_DIR, "~/.claude-personal");
+check("a profile is a label and nothing a server could run", () => {
+  // Deliberately the whole shape. If a command, an environment or a credential
+  // ever reappears here, a server compromise reaches every enrolled machine.
+  assert.deepEqual(Object.keys(store.getProfile(profile.id)).sort(), [
+    "createdAt",
+    "id",
+    "label",
+    "workerId",
+  ]);
 });
 
 const project = store.registerProject({
   name: "alexandria",
   workerId: worker.id,
-  path: "/Users/you/src/alexandria",
   defaultProfileId: profile.id,
   context: "Rust, uses nextest.",
+  requestedPosture: "edits",
 });
 
-check("register is idempotent and updates path", () => {
-  const again = store.registerProject({
-    name: "alexandria",
-    workerId: worker.id,
-    path: "/Users/you/src/alexandria2",
-  });
+check("register is idempotent and keeps what it is not given", () => {
+  const again = store.registerProject({ name: "alexandria", workerId: worker.id });
   assert.equal(again.id, project.id);
-  assert.equal(again.path, "/Users/you/src/alexandria2");
   // COALESCE keeps values the second call omitted.
   assert.equal(again.defaultProfileId, profile.id);
   assert.equal(again.context, "Rust, uses nextest.");
+  assert.equal(again.requestedPosture, "edits");
   assert.equal(store.listProjects().length, 1);
+});
+
+check("a project carries no path for a server to repoint", () => {
+  assert.deepEqual(Object.keys(project).sort(), [
+    "archivedAt",
+    "context",
+    "createdAt",
+    "defaultProfileId",
+    "id",
+    "name",
+    "requestedPosture",
+    "workerId",
+  ]);
 });
 
 check("project lookup accepts id or name", () =>
@@ -96,11 +107,7 @@ check("new session is queued", () => {
 
 check("a profile on the wrong worker is refused", () => {
   const other = store.createWorker("Windows Desktop", "win32").worker;
-  const alien = store.createProfile({
-    workerId: other.id,
-    label: "haiku-cheap",
-    command: "claude",
-  });
+  const alien = store.createProfile({ workerId: other.id, label: "haiku-cheap" });
   assert.throws(
     () => store.createSession({ project: "alexandria", prompt: "x", profileId: alien.id }),
     StateError,
@@ -118,8 +125,9 @@ check("claim hands over one item with its prompt", () => {
   assert.equal(item.session.state, "running");
   assert.equal(item.resume, false);
   assert.match(item.prompt, /nextest config/);
-  assert.equal(item.project.path, "/Users/you/src/alexandria2");
-  assert.equal(item.profile.command, "claude");
+  assert.equal(item.project.name, "alexandria", "the runner is told the name");
+  assert.equal(item.profile.label, "opus-personal", "and the account's label");
+  assert.equal(item.project.requestedPosture, "edits", "and what autonomy was asked for");
 });
 
 check("a claimed session is not handed out twice", () =>
@@ -243,24 +251,12 @@ check("the message log is the full history", () => {
 
 // -- editing and removing profiles --------------------------------------------
 
-const scratch = store.createProfile({
-  workerId: worker.id,
-  label: "scratch",
-  command: "claude",
-  args: ["--model", "haiku"],
-  credentialRef: "client-a",
-});
+const scratch = store.createProfile({ workerId: worker.id, label: "scratch" });
 
-check("re-adding a label replaces the profile outright", () => {
-  const again = store.createProfile({
-    workerId: worker.id,
-    label: "scratch",
-    command: "claude",
-    credentialRef: "client-b",
-  });
-  assert.equal(again.id, scratch.id, "the id is stable");
-  assert.equal(again.credentialRef, "client-b", "the credential is corrected");
-  assert.deepEqual(again.args, [], "and args left off are not quietly kept");
+check("re-adding a label is idempotent", () => {
+  const again = store.createProfile({ workerId: worker.id, label: "Scratch" });
+  assert.equal(again.id, scratch.id, "the id is stable across spelling");
+  assert.equal(again.label, "Scratch", "the label is corrected");
   assert.equal(again.createdAt, scratch.createdAt, "but its age survives");
   assert.equal(store.listProfiles(worker.id).filter((p) => p.id === scratch.id).length, 1);
 });
@@ -292,69 +288,159 @@ check("a profile with sessions against it cannot be deleted", () => {
   assert.throws(() => store.deleteProfile(profile.id), /session/i);
 });
 
-// -- per-project permissions --------------------------------------------------
+// -- paths people paste -------------------------------------------------------
 
-check("a project keeps whatever permissions it was given", () => {
+check("a path pasted from Explorer loses its quotes", () => {
+  // "Copy as path" in Windows Explorer gives exactly this. Left alone, the
+  // leading quote makes the string relative, and it used to be resolved
+  // against the working directory -- so the wizard rejected a path that was
+  // plainly there.
+  assert.equal(cleanPath('"C:\\Users\\you\\src\\thing"'), "C:\\Users\\you\\src\\thing");
+  assert.equal(cleanPath("'/Users/you/src/thing'"), "/Users/you/src/thing");
+  assert.equal(cleanPath('  "/srv/app"  '), "/srv/app");
+});
+
+check("an unquoted path is left exactly as it is", () => {
+  assert.equal(cleanPath("/Users/you/src/thing"), "/Users/you/src/thing");
+  assert.equal(cleanPath("C:\\src\\thing"), "C:\\src\\thing");
+  // A lone quote is not a pair, so it is not a quoted path and nothing is
+  // stripped -- the answer is wrong either way, and silently changing it would
+  // hide that.
+  assert.equal(cleanPath('"/srv/app'), '"/srv/app');
+  assert.equal(cleanPath(""), "");
+  assert.equal(cleanPath('"'), '"');
+});
+
+check("a tilde is expanded, because no shell was there to do it", () => {
+  assert.equal(cleanPath("~"), homedir());
+  assert.equal(cleanPath("~/src/thing"), join(homedir(), "/src/thing"));
+  assert.ok(!cleanPath("~weird/path").startsWith(homedir()), "but only a real home prefix");
+});
+
+// -- postures -----------------------------------------------------------------
+
+check("a project keeps the posture it was asked for", () => {
   const p = store.registerProject({
     name: "permissive",
     workerId: worker.id,
-    path: "/Users/you/src/permissive",
     defaultProfileId: profile.id,
-    permissionMode: "acceptEdits",
-    allowedTools: ["Read", "Bash(git status*)"],
-    deniedTools: ["Bash(rm *)"],
+    requestedPosture: "trusted",
   });
-  assert.equal(p.permissionMode, "acceptEdits");
-  assert.deepEqual(p.allowedTools, ["Read", "Bash(git status*)"]);
-  assert.deepEqual(p.deniedTools, ["Bash(rm *)"]);
+  assert.equal(p.requestedPosture, "trusted");
 });
 
-check("re-registering without permissions keeps the ones already set", () => {
-  const again = store.registerProject({
-    name: "permissive",
-    workerId: worker.id,
-    path: "/Users/you/src/permissive",
-  });
-  assert.equal(again.permissionMode, "acceptEdits", "the mode survives");
-  assert.deepEqual(again.allowedTools, ["Read", "Bash(git status*)"], "and the list");
+check("re-registering without a posture keeps the one already set", () => {
+  const again = store.registerProject({ name: "permissive", workerId: worker.id });
+  assert.equal(again.requestedPosture, "trusted");
 });
 
-check("an empty list is a real answer, not an omission", () => {
-  const cleared = store.registerProject({
-    name: "permissive",
-    workerId: worker.id,
-    path: "/Users/you/src/permissive",
-    allowedTools: [],
-  });
-  assert.deepEqual(cleared.allowedTools, [], "allowing nothing is settable");
-  assert.deepEqual(cleared.deniedTools, ["Bash(rm *)"], "and does not disturb the rest");
-});
-
-check("a project with no permissions set reads as defaults", () => {
+check("a project with no posture asked for defers to the machine", () => {
   const plain = store.registerProject({
     name: "plain",
     workerId: worker.id,
-    path: "/Users/you/src/plain",
     defaultProfileId: profile.id,
   });
-  assert.equal(plain.permissionMode, null);
-  assert.deepEqual(plain.allowedTools, []);
-  assert.deepEqual(plain.deniedTools, []);
+  assert.equal(plain.requestedPosture, null, "null means whatever the worker allows");
 });
 
-check("a misspelt permission mode is refused at the door", () => {
+check("a misspelt posture is refused at the door", () => {
   assert.throws(
     () =>
       store.registerProject({
         name: "typo",
         workerId: worker.id,
-        path: "/Users/you/src/typo",
         defaultProfileId: profile.id,
-        permissionMode: "acceptAllTheThings" as never,
+        requestedPosture: "trustMeBro" as never,
       }),
-    /unknown permission mode/i,
+    /unknown posture/i,
   );
   assert.throws(() => store.getProject("typo"), /no project/i, "and nothing was written");
+});
+
+check("the stricter posture always wins", () => {
+  assert.equal(stricter("ask", "trusted"), "ask");
+  assert.equal(stricter("trusted", "ask"), "ask");
+  assert.equal(stricter("edits", "trusted"), "edits");
+  assert.equal(stricter("edits", "edits"), "edits");
+});
+
+check("no posture uses the mode that would skip the guards", () => {
+  // bypassPermissions skips the protected paths on .git and .claude and skips
+  // read containment, so it must never be one of the answers.
+  for (const preset of PERMISSION_PRESETS) {
+    assert.notEqual(preset.permissionMode, "bypassPermissions", `${preset.key} must not bypass`);
+  }
+});
+
+// The runner only reaches the contained branch on a platform that has a
+// sandbox, so on Windows the end-to-end test takes the refusal path instead.
+// Check the document itself here, where the platform does not matter.
+check("a contained project asks for a sandbox that fails shut", () => {
+  const settings = sessionSettings({
+    posture: "trusted",
+    contained: true,
+    allowedDomains: ["registry.npmjs.org"],
+  });
+  const sandbox = settings.sandbox as Record<string, unknown>;
+  assert.equal(sandbox.enabled, true);
+  assert.equal(
+    sandbox.failIfUnavailable,
+    true,
+    "a machine missing bubblewrap must refuse to start, not run everything in the open",
+  );
+  assert.equal(
+    sandbox.allowUnsandboxedCommands,
+    false,
+    "and a command must not be retried outside the sandbox when it fails inside it",
+  );
+  assert.deepEqual(sandbox.network, { allowedDomains: ["registry.npmjs.org"] });
+});
+
+check("an uncontained project still gets every rule the sandbox is not", () => {
+  const settings = sessionSettings({ posture: "trusted", contained: false, allowedDomains: [] });
+  assert.deepEqual(settings.sandbox, { enabled: false }, "said out loud, not left absent");
+  const permissions = settings.permissions as { deny: string[] };
+  assert.ok(permissions.deny.includes("Read(~/.ssh/**)"), "policy still applies");
+});
+
+check("network egress is refused by default, not merely unconfigured", () => {
+  const settings = sessionSettings({ posture: "trusted", contained: true, allowedDomains: [] });
+  const sandbox = settings.sandbox as { network: { allowedDomains: string[] } };
+  assert.deepEqual(sandbox.network.allowedDomains, [], "no hosts unless someone names them");
+});
+
+check("no deny rule is written against a tool that never matches paths", () => {
+  // Claude Code accepts Write(path), Glob(path) and NotebookEdit(path) rules
+  // and then never matches a file against them. A rule like that looks like
+  // protection and is not, which is worse than having none.
+  const deny = (sessionSettings({ posture: "ask", contained: false, allowedDomains: [] })
+    .permissions as { deny: string[] }).deny;
+  for (const rule of deny) {
+    assert.ok(
+      !/^(Write|Glob|NotebookEdit|MultiEdit)\(/.test(rule),
+      `${rule} would be accepted and never matched`,
+    );
+  }
+});
+
+check("the machine's floor refuses and never grants", () => {
+  const floor = floorSettings().permissions as Record<string, unknown>;
+  assert.ok(Array.isArray(floor.deny) && floor.deny.length > 0, "it denies things");
+  assert.ok(!("allow" in floor), "a managed allow rule would be a hole nothing could close");
+  assert.equal(floor.disableBypassPermissionsMode, "disable");
+  assert.equal(floor.blockReadsOutsideWorkingDirectories, true);
+});
+
+check("the floor goes somewhere only an administrator can write", () => {
+  for (const platform of ["win32", "darwin", "linux"]) {
+    const target = floorTarget(platform);
+    assert.equal(target.needsElevation, true, `${platform} needs elevation`);
+    assert.match(target.path, /managed-settings\.json$/);
+    assert.match(target.install("/tmp/staged.json"), /staged\.json/, "and says how to install it");
+  }
+  // The legacy Windows location is not read by Claude Code, so naming it would
+  // produce a floor that silently does nothing.
+  assert.ok(!floorTarget("win32").path.includes("ProgramData"));
 });
 
 // -- enrollment ---------------------------------------------------------------
@@ -363,19 +449,8 @@ check("enrolling sets up a machine, its profiles and its projects at once", () =
   const result = store.enroll({
     name: "Studio Mac",
     platform: "darwin",
-    profiles: [
-      { label: "Personal", command: "claude", credentialRef: "personal" },
-      { label: "Client A", command: "claude", credentialRef: "client-a" },
-    ],
-    projects: [
-      {
-        name: "brochure",
-        path: "/Users/you/src/brochure",
-        profileLabel: "Client A",
-        permissionMode: "acceptEdits",
-        allowedTools: ["Read"],
-      },
-    ],
+    profiles: [{ label: "Personal" }, { label: "Client A" }],
+    projects: [{ name: "brochure", profileLabel: "Client A", posture: "edits" }],
   });
 
   assert.equal(result.worker.id, "studio-mac");
@@ -385,7 +460,7 @@ check("enrolling sets up a machine, its profiles and its projects at once", () =
 
   const project = store.getProject("brochure");
   assert.equal(project.defaultProfileId, "studio-mac:client-a", "the named profile is the default");
-  assert.equal(project.permissionMode, "acceptEdits");
+  assert.equal(project.requestedPosture, "edits");
 });
 
 check("enrolling a machine that already exists is refused by default", () => {
@@ -400,7 +475,30 @@ check("replacing rotates the token and keeps the projects", () => {
   const result = store.enroll({ name: "Studio Mac", platform: "darwin", replace: true });
   assert.match(result.token, /^baton_/);
   assert.equal(store.authWorker(result.token)?.id, "studio-mac");
-  assert.equal(store.getProject("brochure").path, before.path, "the project is still there");
+  assert.equal(
+    store.getProject("brochure").requestedPosture,
+    before.requestedPosture,
+    "the project is still there",
+  );
+});
+
+check("a worker's reported inventory round-trips, and a broken one is not fatal", () => {
+  store.setInventory("studio-mac", {
+    projects: [
+      { id: "brochure", path: "/Users/you/src/brochure", profile: "client-a", posture: "edits", contained: true },
+    ],
+    profiles: [{ label: "Client A", credential: "client-a" }],
+  });
+  const reported = store.getWorker("studio-mac");
+  assert.equal(reported.inventory?.projects[0]?.path, "/Users/you/src/brochure");
+  assert.equal(reported.inventory?.projects[0]?.contained, true);
+  assert.ok(reported.inventoryAt, "and when it was reported");
+
+  // It is written by another machine, so a shape we do not recognise must
+  // degrade to "nothing reported" rather than break every list call.
+  db.prepare(`UPDATE workers SET inventory_json = 'not json at all' WHERE id = 'studio-mac'`).run();
+  assert.equal(store.getWorker("studio-mac").inventory, null);
+  assert.equal(store.listWorkers().length > 0, true, "and listing still works");
 });
 
 check("a project naming a profile that is not being enrolled rolls the whole thing back", () => {
@@ -408,8 +506,8 @@ check("a project naming a profile that is not being enrolled rolls the whole thi
     () =>
       store.enroll({
         name: "Doomed Box",
-        profiles: [{ label: "Personal", command: "claude" }],
-        projects: [{ name: "orphan", path: "/tmp/orphan", profileLabel: "Nope" }],
+        profiles: [{ label: "Personal" }],
+        projects: [{ name: "orphan", profileLabel: "Nope" }],
       }),
     /which is not one of the profiles/i,
   );
@@ -417,47 +515,88 @@ check("a project naming a profile that is not being enrolled rolls the whole thi
   assert.throws(() => store.getProject("orphan"), /no project/i);
 });
 
-// -- migrating a database that predates those columns -------------------------
+// -- migrating a database from before the worker held its own config ----------
 
-check("an older database gains the permission columns without losing anything", () => {
-  const path = join(dir, "older.db");
+/** A database in the shape baton used when the server chose what to run. */
+function oldDatabase(path: string): void {
   const old = new DatabaseSync(path);
   old.exec(`
     CREATE TABLE workers (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, platform TEXT,
       token_hash TEXT NOT NULL, last_seen_at TEXT, created_at TEXT NOT NULL
     );
+    CREATE TABLE profiles (
+      id TEXT PRIMARY KEY,
+      worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+      label TEXT NOT NULL, command TEXT NOT NULL,
+      launch_args_json TEXT NOT NULL DEFAULT '[]',
+      args_json TEXT NOT NULL DEFAULT '[]',
+      env_json TEXT NOT NULL DEFAULT '{}',
+      credential_ref TEXT, created_at TEXT NOT NULL,
+      UNIQUE (worker_id, label)
+    );
     CREATE TABLE projects (
       id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
       worker_id TEXT NOT NULL REFERENCES workers(id), path TEXT NOT NULL,
       default_profile_id TEXT, context TEXT,
+      permission_mode TEXT,
+      allowed_tools_json TEXT NOT NULL DEFAULT '[]',
+      denied_tools_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL, archived_at TEXT
     );
   `);
   old.prepare("INSERT INTO workers VALUES (?, ?, ?, ?, ?, ?)").run(
     "old-box", "Old Box", "linux", "hash", null, "2026-01-01T00:00:00.000Z",
   );
-  old.prepare("INSERT INTO projects VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
-    "legacy", "legacy", "old-box", "/srv/legacy", null, "notes worth keeping",
-    "2026-01-01T00:00:00.000Z", null,
+  old.prepare("INSERT INTO profiles VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    "old-box:claude", "old-box", "claude", "/usr/local/bin/claude", "[]",
+    '["--model","opus"]', '{"ANTHROPIC_API_KEY":"sk-ant-oops"}', "personal",
+    "2026-01-01T00:00:00.000Z",
+  );
+  old.prepare("INSERT INTO projects VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    "legacy", "legacy", "old-box", "/srv/legacy", "old-box:claude", "notes worth keeping",
+    "bypassPermissions", '["Bash"]', "[]", "2026-01-01T00:00:00.000Z", null,
   );
   old.close();
+}
 
-  // Opening it is the migration: the columns are added in place.
+check("migrating drops what the server must no longer be able to choose", () => {
+  const path = join(dir, "older.db");
+  oldDatabase(path);
+
+  // Opening it is the migration.
   const migrated = openDb(path);
   const store2 = new Store(migrated);
-  const project = store2.getProject("legacy");
 
-  assert.equal(project.path, "/srv/legacy", "the row survived");
-  assert.equal(project.context, "notes worth keeping");
-  assert.equal(project.permissionMode, null, "and reads as unset, not as broken");
-  assert.deepEqual(project.allowedTools, []);
-  assert.deepEqual(project.deniedTools, []);
+  const columns = (table: string): string[] =>
+    (migrated.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+      (c) => c.name,
+    );
+
+  // The point of the migration. A stored command, environment or path left
+  // behind would be the thing being removed, still sitting there -- including,
+  // in this fixture, an API key that was never meant to live on the server.
+  for (const column of ["command", "launch_args_json", "args_json", "env_json", "credential_ref"]) {
+    assert.ok(!columns("profiles").includes(column), `profiles.${column} is gone`);
+  }
+  for (const column of ["path", "permission_mode", "allowed_tools_json", "denied_tools_json"]) {
+    assert.ok(!columns("projects").includes(column), `projects.${column} is gone`);
+  }
+  const dump = JSON.stringify(migrated.prepare("SELECT * FROM profiles").all());
+  assert.ok(!dump.includes("sk-ant-oops"), "and the secret it held went with it");
+
+  // Everything worth keeping survived.
+  const project = store2.getProject("legacy");
+  assert.equal(project.context, "notes worth keeping", "the row survived");
+  assert.equal(project.defaultProfileId, "old-box:claude");
+  assert.equal(project.requestedPosture, null, "and the new column reads as unset, not broken");
+  assert.equal(store2.getProfile("old-box:claude").label, "claude");
+  assert.equal(store2.getWorker("old-box").inventory, null, "nothing reported yet");
 
   // Running it again must be a no-op rather than an error.
   migrated.close();
   const twice = openDb(path);
-  assert.equal(new Store(twice).getProject("legacy").path, "/srv/legacy");
+  assert.equal(new Store(twice).getProject("legacy").context, "notes worth keeping");
   twice.close();
 });
 

@@ -136,13 +136,24 @@ On each worker machine, not on the server:
 npm run enroll -- --server https://baton.yourdomain.com
 ```
 
-It asks for the login password, works out what the machine has, asks what each
-project may do unattended, and writes `runner.config.json` itself. The worker
-token never passes through you.
+It asks for the login password, works out what the machine has, asks the most
+each project may ever do, and writes `~/.baton/runner.config.json` itself. The
+worker token never passes through you.
+
+The server is told the project and account **names** and the posture you asked
+for. The command, the environment, the checkout's path and the credentials stay
+on the machine — see "What the server knows, and what it cannot" in the README
+for why that split matters.
+
+The wizard finishes by staging a `managed-settings.json` and printing the one
+elevated command to install it. Run that command: it is the floor no session on
+the machine can get under, and it is the only guard that still holds if baton
+itself is wrong. `npm run floor` regenerates it on its own.
 
 There is still `cli.ts worker add` on the server if you want to register a
-machine without touching it, but then you have to carry the token across
-yourself — it is printed once and is not recoverable.
+machine without touching it, but you then have to carry the token across
+yourself — it is printed once and is not recoverable — and the machine still
+needs its own config before it can run anything.
 
 ## 8. Backups
 

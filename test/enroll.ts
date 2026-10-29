@@ -64,6 +64,21 @@ await check("a missing password is refused too", async () => {
   assert.equal((await enroll({ worker: { name: "Nameless" } })).status, 401);
 });
 
+await check("the password can be checked before anything is registered", async () => {
+  // The wizard asks a dozen questions before it submits. Finding out about a
+  // typo at the end used to cost all of the answers.
+  const ok = await enroll({ password: PASSWORD, check: true });
+  assert.equal(ok.status, 200);
+  assert.ok(!ok.body.token, "and it hands back nothing");
+
+  const bad = await enroll({ password: "not-it", check: true });
+  assert.equal(bad.status, 401);
+
+  // It must create nothing, whatever else is in the body.
+  await enroll({ password: PASSWORD, check: true, worker: { name: "Ghost Box" } });
+  assert.throws(() => store.getWorker("ghost-box"), /no worker/i);
+});
+
 await check("a nameless machine is refused", async () => {
   const res = await enroll({ password: PASSWORD, worker: {} });
   assert.equal(res.status, 400);
@@ -76,20 +91,8 @@ await check("enrolling returns a working token the operator never sees", async (
   const res = await enroll({
     password: PASSWORD,
     worker: { name: "Studio Mac", platform: "darwin" },
-    profiles: [
-      { label: "Personal", command: "claude", credentialRef: "personal" },
-      { label: "Client A", command: "node", launchArgs: ["/opt/cli.js"], credentialRef: "client-a" },
-    ],
-    projects: [
-      {
-        name: "brochure",
-        path: "/Users/you/src/brochure",
-        profileLabel: "Client A",
-        permissionMode: "acceptEdits",
-        allowedTools: ["Read", "Bash(git status*)"],
-        deniedTools: ["Bash(rm *)"],
-      },
-    ],
+    profiles: [{ label: "Personal" }, { label: "Client A" }],
+    projects: [{ name: "brochure", profileLabel: "Client A", posture: "edits" }],
   });
 
   assert.equal(res.status, 201);
@@ -108,18 +111,29 @@ await check("that token is immediately good for the runner API", async () => {
   assert.equal(res.status, 200, "the machine can start working without another step");
 });
 
-await check("the profiles and permissions landed as asked", () => {
+await check("the accounts and the requested posture landed as asked", () => {
   const project = store.getProject("brochure");
   assert.equal(project.workerId, "studio-mac");
   assert.equal(project.defaultProfileId, "studio-mac:client-a");
-  assert.equal(project.permissionMode, "acceptEdits");
-  assert.deepEqual(project.allowedTools, ["Read", "Bash(git status*)"]);
-  assert.deepEqual(project.deniedTools, ["Bash(rm *)"]);
+  assert.equal(project.requestedPosture, "edits");
 
   const profile = store.getProfile("studio-mac:client-a");
-  assert.equal(profile.command, "node");
-  assert.deepEqual(profile.launchArgs, ["/opt/cli.js"]);
-  assert.equal(profile.credentialRef, "client-a");
+  assert.equal(profile.label, "Client A");
+});
+
+await check("enrolment cannot plant a command, a path or an environment", () => {
+  // The wizard sends names. Even if something sent more, there is nowhere for
+  // it to land -- which is the property worth testing, because the whole point
+  // is that a server compromise cannot reach past the worker's own config.
+  const columns = (table: string): string[] =>
+    (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+
+  for (const column of ["command", "launch_args_json", "args_json", "env_json", "credential_ref"]) {
+    assert.ok(!columns("profiles").includes(column), `profiles.${column} must not exist`);
+  }
+  for (const column of ["path", "permission_mode", "allowed_tools_json", "denied_tools_json"]) {
+    assert.ok(!columns("projects").includes(column), `projects.${column} must not exist`);
+  }
 });
 
 await check("enrolling the same machine twice is refused, with a way forward", async () => {
@@ -144,15 +158,15 @@ await check("replace rotates the token and retires the old one", async () => {
   assert.equal(old.status, 401, "and the old one stops working");
 });
 
-await check("a bad permission mode is reported, not swallowed", async () => {
+await check("a bad posture is reported, not swallowed", async () => {
   const res = await enroll({
     password: PASSWORD,
     worker: { name: "Typo Box" },
-    profiles: [{ label: "Personal", command: "claude" }],
-    projects: [{ name: "typo", path: "/tmp/typo", permissionMode: "yolo" }],
+    profiles: [{ label: "Personal" }],
+    projects: [{ name: "typo", posture: "yolo" }],
   });
   assert.equal(res.status, 409);
-  assert.match(res.body.error ?? "", /unknown permission mode/i);
+  assert.match(res.body.error ?? "", /unknown posture/i);
   assert.throws(() => store.getWorker("typo-box"), /no worker/i, "and nothing was created");
 });
 

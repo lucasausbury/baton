@@ -134,6 +134,18 @@ export function createRunnerHandler(store: Store): RequestHandler {
     }
     store.heartbeat(worker.id, typeof req.headers["x-platform"] === "string" ? req.headers["x-platform"] : undefined);
 
+    // What this machine has, for the lists in the Claude apps. The server
+    // keeps it as reported and never uses it to launch anything.
+    if (method === "POST" && path === "/v1/inventory") {
+      const body = await readJson(req);
+      store.setInventory(worker.id, {
+        projects: Array.isArray(body.projects) ? (body.projects as never) : [],
+        profiles: Array.isArray(body.profiles) ? (body.profiles as never) : [],
+      });
+      send(res, 204);
+      return;
+    }
+
     // Long-poll for work. Returns as soon as anything is queued for this
     // worker. `limit` is how many the runner can actually take right now;
     // limit=0 means it is at capacity and only wants to hear about

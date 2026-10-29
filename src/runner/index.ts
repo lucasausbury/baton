@@ -53,8 +53,40 @@ async function tick(): Promise<void> {
   }
 }
 
+/**
+ * Sends the server a description of this machine for its lists: which projects
+ * live here, where, under which profile and at what ceiling.
+ *
+ * A failure is logged and ignored. It is cosmetic data, and a machine that
+ * cannot report it can still do the work.
+ */
+async function reportInventory(): Promise<void> {
+  try {
+    await client.reportInventory({
+      projects: Object.entries(config.projects).map(([id, p]) => ({
+        id,
+        path: p.path,
+        profile: p.profile,
+        posture: p.posture,
+        contained: p.contained,
+      })),
+      profiles: Object.entries(config.profiles).map(([label, p]) => ({
+        label,
+        credential: p.credentialRef,
+      })),
+    });
+  } catch (err) {
+    log(`could not report inventory (harmless): ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 async function main(): Promise<void> {
   log(`worker ${config.workerId} -> ${config.serverUrl}, up to ${config.maxConcurrent} at once`);
+  log(`config ${config.source}`);
+  log(
+    `${Object.keys(config.projects).length} project(s), ${Object.keys(config.profiles).length} profile(s)`,
+  );
+  await reportInventory();
 
   let backoff = config.retrySeconds;
   while (!stopping) {

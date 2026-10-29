@@ -46,52 +46,56 @@ export interface Worker {
   name: string;
   platform: string | null;
   lastSeenAt: string | null;
-  createdAt: string;
-}
-
-export interface Profile {
-  id: string;
-  workerId: string;
-  label: string;
-  command: string;
-  /** Inserted immediately after the command, before any of our own flags. */
-  launchArgs: string[];
-  args: string[];
-  env: Record<string, string>;
-  credentialRef: string | null;
+  /** What this machine last said it has. Display only; never used to launch. */
+  inventory: WorkerInventory | null;
+  inventoryAt: string | null;
   createdAt: string;
 }
 
 /**
- * What Claude Code accepts for --permission-mode, plus "default" for our own
- * "pass no flag at all". Checked before a project is stored, so a typo surfaces
- * when you set it rather than as a failed run hours later.
+ * A profile names an account on a machine, and nothing more.
+ *
+ * What it actually runs -- the binary, its arguments, its environment, which
+ * credential it uses -- lives in that machine's own runner config, keyed by
+ * slug(label). The server deliberately cannot see or set any of it: a server
+ * that could name an executable and its environment would be a server that
+ * could run anything it liked on every machine enrolled with it.
  */
-export const PERMISSION_MODES = [
-  "default",
-  "acceptEdits",
-  "auto",
-  "manual",
-  "dontAsk",
-  "plan",
-  "bypassPermissions",
-] as const;
+export interface Profile {
+  id: string;
+  workerId: string;
+  label: string;
+  createdAt: string;
+}
 
-export type PermissionMode = (typeof PERMISSION_MODES)[number];
+/**
+ * How much a project's agents may do without asking, least to most autonomous.
+ *
+ * The server stores a *request*; the worker holds the ceiling and takes the
+ * stricter of the two. An enum rather than tool patterns, so there is nothing
+ * for a compromised server to inject -- "--allowedTools Bash" would have been a
+ * shell for the asking.
+ */
+export const POSTURES = ["ask", "edits", "trusted"] as const;
 
+export type Posture = (typeof POSTURES)[number];
+
+/**
+ * Like a profile, a project is a name the worker resolves locally. Its path on
+ * disk is in that machine's runner config, not here, so the server cannot
+ * repoint a project at someone's home directory and ask for a summary of it.
+ *
+ * reportedPath and reportedPosture are what the worker last said about itself.
+ * They exist to be displayed and are never used to launch anything.
+ */
 export interface Project {
   id: string;
   name: string;
   workerId: string;
-  path: string;
   defaultProfileId: string | null;
   context: string | null;
-  /** null means we pass nothing and Claude Code uses its own default. */
-  permissionMode: PermissionMode | null;
-  /** Tool patterns that never become a permission prompt, e.g. "Bash(git *)". */
-  allowedTools: string[];
-  /** Tool patterns refused outright, whatever the mode says. */
-  deniedTools: string[];
+  /** The most autonomy the operator asks for. The worker may grant less. */
+  requestedPosture: Posture | null;
   createdAt: string;
   archivedAt: string | null;
 }
@@ -125,7 +129,13 @@ export interface Message {
   createdAt: string;
 }
 
-/** What a runner needs in order to spawn an agent. */
+/**
+ * What the server can tell a runner about a session.
+ *
+ * Note what is absent: no command, no environment, no path, no tool patterns.
+ * The runner resolves all of that from its own config by project id and
+ * profile label, and refuses the session if it cannot.
+ */
 export interface WorkItem {
   session: Session;
   project: Project;
@@ -134,6 +144,12 @@ export interface WorkItem {
   prompt: string;
   /** False on the first run, true when the agent should be resumed. */
   resume: boolean;
+}
+
+/** What a worker reports about itself, for display only. */
+export interface WorkerInventory {
+  projects: { id: string; path: string; profile: string; posture: Posture; contained: boolean }[];
+  profiles: { label: string; credential: string | null }[];
 }
 
 export class StateError extends Error {}

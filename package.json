@@ -11,6 +11,7 @@
     "server": "node --no-warnings=ExperimentalWarning src/index.ts",
     "runner": "node --no-warnings=ExperimentalWarning src/runner/index.ts",
     "enroll": "node --no-warnings=ExperimentalWarning src/enroll.ts",
+    "floor": "node --no-warnings=ExperimentalWarning src/enroll.ts --floor-only",
     "cli": "node --no-warnings=ExperimentalWarning src/cli.ts",
     "backup": "node --no-warnings=ExperimentalWarning scripts/backup.ts",
     "typecheck": "tsc --noEmit",

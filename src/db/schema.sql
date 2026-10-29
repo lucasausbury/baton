@@ -1,46 +1,50 @@
 -- Workers are the dev machines. They authenticate with a bearer token and are
 -- only ever reachable outbound, so nothing here records an address.
+-- inventory_json is what the worker last reported about itself: its project
+-- paths, its profile labels, the posture each project allows. It is shown in
+-- the Claude apps and never used to launch anything, because the machine is
+-- the authority on all of it.
 CREATE TABLE IF NOT EXISTS workers (
-  id           TEXT PRIMARY KEY,
-  name         TEXT NOT NULL,
-  platform     TEXT,
-  token_hash   TEXT NOT NULL,
-  last_seen_at TEXT,
-  created_at   TEXT NOT NULL
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  platform      TEXT,
+  token_hash    TEXT NOT NULL,
+  last_seen_at  TEXT,
+  inventory_json TEXT,
+  inventory_at  TEXT,
+  created_at    TEXT NOT NULL
 );
 
--- A profile is one way to run an agent on one worker: which binary, which
--- model, whose account. credential_ref names a secret the runner resolves from
--- its own local config -- the server never stores credentials.
+-- A profile is a label for an account on one worker, and nothing else.
+--
+-- What it runs -- the binary, its arguments, its environment, which credential
+-- it uses -- is in that machine's runner.config.json, keyed by slug(label).
+-- None of it is here on purpose: a server that could name an executable and
+-- its environment could run anything it liked on every machine enrolled with
+-- it, and the login password would be the only thing in the way.
 CREATE TABLE IF NOT EXISTS profiles (
   id             TEXT PRIMARY KEY,
   worker_id      TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
   label          TEXT NOT NULL,
-  command        TEXT NOT NULL,
-  -- launch_args go before our own flags, so a profile can be "node cli.js";
-  -- args go after, for things like --model.
-  launch_args_json TEXT NOT NULL DEFAULT '[]',
-  args_json      TEXT NOT NULL DEFAULT '[]',
-  env_json       TEXT NOT NULL DEFAULT '{}',
-  credential_ref TEXT,
   created_at     TEXT NOT NULL,
   UNIQUE (worker_id, label)
 );
 
+-- A project is a name, a machine, and how much you are asking its agents to
+-- be trusted with. The checkout's path is in the worker's own config, so the
+-- server cannot repoint a project at someone's home directory and then queue
+-- "summarise the files here".
+--
+-- requested_posture is a request, not a grant: the worker holds the ceiling and
+-- takes the stricter of the two. It is one of the names in POSTURES rather than
+-- a list of tool patterns, so there is nothing here to inject.
 CREATE TABLE IF NOT EXISTS projects (
   id                 TEXT PRIMARY KEY,
   name               TEXT NOT NULL UNIQUE,
   worker_id          TEXT NOT NULL REFERENCES workers(id),
-  path               TEXT NOT NULL,
   default_profile_id TEXT REFERENCES profiles(id),
   context            TEXT,
-  -- How much this project's agents may do without asking. Enforced by Claude
-  -- Code itself rather than by our shim: a tool that is allowed here never
-  -- becomes a permission prompt, so it costs no round trip and there is no
-  -- second matcher of ours to get subtly wrong.
-  permission_mode    TEXT,
-  allowed_tools_json TEXT NOT NULL DEFAULT '[]',
-  denied_tools_json  TEXT NOT NULL DEFAULT '[]',
+  requested_posture  TEXT,
   created_at         TEXT NOT NULL,
   archived_at        TEXT
 );

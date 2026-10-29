@@ -16,20 +16,29 @@ const db = openDb(join(dir, "api.db"));
 const store = new Store(db);
 
 const { worker, token } = store.createWorker("MacBook Pro", "darwin");
-const profile = store.createProfile({
-  workerId: worker.id,
-  label: "opus-personal",
-  command: "claude",
-  args: ["--model", "opus"],
-  env: { CLAUDE_CONFIG_DIR: "~/.claude-personal" },
-});
+const profile = store.createProfile({ workerId: worker.id, label: "opus-personal" });
 store.registerProject({
   name: "alexandria",
   workerId: worker.id,
-  path: "/Users/you/src/alexandria",
   defaultProfileId: profile.id,
+  requestedPosture: "edits",
+});
+// What the machine says it has. The server stores this as reported and never
+// uses it to launch anything.
+store.setInventory(worker.id, {
+  projects: [
+    {
+      id: "alexandria",
+      path: "/Users/you/src/alexandria",
+      profile: "opus-personal",
+      posture: "edits",
+      contained: true,
+    },
+  ],
+  profiles: [{ label: "opus-personal", credential: "personal" }],
 });
 const other = store.createWorker("Windows Desktop", "win32");
+store.setInventory(other.worker.id, { projects: [], profiles: [] });
 
 const server = buildServer(store, db, { adminToken: ADMIN, host: "127.0.0.1" });
 await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -69,6 +78,70 @@ await check("health needs no token", async () => {
 await check("a bad worker token is rejected", async () => {
   const res = await api("/v1/work?wait=0", {}, "baton_nope");
   assert.equal(res.status, 401);
+});
+
+// -- inventory ---------------------------------------------------------------
+
+await check("a worker can report what it has, and only about itself", async () => {
+  const res = await api("/v1/inventory", {
+    method: "POST",
+    body: JSON.stringify({
+      projects: [
+        { id: "alexandria", path: "/new/place", profile: "opus-personal", posture: "trusted", contained: false },
+      ],
+      profiles: [{ label: "opus-personal", credential: "personal" }],
+    }),
+  });
+  assert.equal(res.status, 204);
+  assert.equal(store.getWorker(worker.id).inventory?.projects[0]?.path, "/new/place");
+
+  // The token identifies the worker, so there is no field to name a different
+  // one -- a machine cannot rewrite another machine's paths or ceilings. The
+  // claim below lands on this worker, not the one it names.
+  await api("/v1/inventory", {
+    method: "POST",
+    body: JSON.stringify({
+      workerId: other.worker.id,
+      projects: [{ id: "stolen", path: "/evil", profile: "x", posture: "trusted", contained: false }],
+      profiles: [],
+    }),
+  });
+  assert.deepEqual(
+    store.getWorker(other.worker.id).inventory,
+    { projects: [], profiles: [] },
+    "the machine it tried to name is untouched",
+  );
+  assert.equal(
+    store.getWorker(worker.id).inventory?.projects[0]?.id,
+    "stolen",
+    "the report applied to the machine whose token was used",
+  );
+
+  // Put the real report back, so the next check has something to look for.
+  await api("/v1/inventory", {
+    method: "POST",
+    body: JSON.stringify({
+      projects: [
+        { id: "alexandria", path: "/new/place", profile: "opus-personal", posture: "trusted", contained: false },
+      ],
+      profiles: [{ label: "opus-personal", credential: "personal" }],
+    }),
+  });
+});
+
+await check("reported paths and ceilings are never used to launch anything", async () => {
+  // The worker just claimed alexandria lives at /new/place with a "trusted"
+  // ceiling. None of that may reach a WorkItem: the runner resolves both from
+  // its own config, and a server that could set them would be the hole this is
+  // all built to close.
+  const session = store.createSession({ project: "alexandria", prompt: "Who decides?" });
+  const item = store.claimWork(worker.id).find((w) => w.session.id === session.id);
+  assert.ok(item);
+  const wire = JSON.stringify(item);
+  assert.ok(!wire.includes("/new/place"), "no path on the wire");
+  assert.ok(!wire.includes("trusted"), "and no ceiling either");
+  assert.equal(item.project.requestedPosture, "edits", "only what was asked for");
+  store.cancelSession(session.id);
 });
 
 await check("an empty queue returns empty, not an error", async () => {
@@ -290,12 +363,7 @@ await check("create_session warns when the worker looks offline", async () => {
   store.registerProject({
     name: "offline-proj",
     workerId: absent.id,
-    path: "C:/src/thing",
-    defaultProfileId: store.createProfile({
-      workerId: absent.id,
-      label: "haiku",
-      command: "claude",
-    }).id,
+    defaultProfileId: store.createProfile({ workerId: absent.id, label: "haiku" }).id,
   });
   const out = await callText("create_session", { project: "offline-proj", prompt: "x" });
   assert.match(out, /looks offline/);
@@ -328,12 +396,7 @@ await check("get_session stays inside the tool result limit", async () => {
 await check("create_session says so when the profile is not the project's own", async () => {
   // A client's conventions arrive through their account, so an override is
   // allowed but must be visible before you walk away from it.
-  const alt = store.createProfile({
-    workerId: worker.id,
-    label: "haiku-cheap",
-    command: "claude",
-    args: ["--model", "haiku"],
-  });
+  const alt = store.createProfile({ workerId: worker.id, label: "haiku-cheap" });
   const out = await callText("create_session", {
     project: "alexandria",
     prompt: "Tidy the imports.",

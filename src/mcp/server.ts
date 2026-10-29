@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { config } from "../config.ts";
-import { NotFound, PERMISSION_MODES, StateError, type Session } from "../core/types.ts";
+import { NotFound, POSTURES, StateError, type Project, type Session } from "../core/types.ts";
 import type { Store } from "../core/store.ts";
 
 /**
@@ -13,6 +13,29 @@ import type { Store } from "../core/store.ts";
  */
 const LOG_BUDGET_CHARS = 90_000;
 const MAX_MESSAGE_CHARS = 8_000;
+
+/**
+ * One line about what a project's agents may do.
+ *
+ * The posture the operator asked for, and -- when the machine has reported in
+ * -- what that machine actually allows. They can differ: the worker holds the
+ * ceiling and takes the stricter of the two, so a request for more autonomy
+ * than the machine permits is quietly clamped rather than honoured.
+ */
+function describePosture(project: Project, reported: { posture: string; contained: boolean } | undefined): string {
+  const asked = project.requestedPosture ?? "(machine default)";
+  if (!reported) return `asked for ${asked}; machine has not reported its ceiling`;
+  const effective =
+    project.requestedPosture === null
+      ? reported.posture
+      : POSTURES.indexOf(project.requestedPosture) <= POSTURES.indexOf(reported.posture as never)
+        ? project.requestedPosture
+        : reported.posture;
+  return (
+    `${effective} (asked ${asked}, machine allows at most ${reported.posture})` +
+    `${reported.contained ? ", sandboxed" : ""}`
+  );
+}
 
 function ago(iso: string | null): string {
   if (!iso) return "never";
@@ -39,10 +62,13 @@ export function createMcpHandler(store: Store) {
   function describe(s: Session): string {
     const project = store.getProject(s.projectId);
     const profile = store.getProfile(s.profileId);
+    const reported = store
+      .getWorker(s.workerId)
+      .inventory?.projects.find((p) => p.id === project.id);
     const parts = [
       `${s.title ?? "(untitled)"} - ${s.state}`,
-      `project:  ${project.name} on ${s.workerId} (${project.path})`,
-      `profile:  ${profile.label} [${[profile.command, ...profile.launchArgs, ...profile.args].join(" ")}]`,
+      `project:  ${project.name} on ${s.workerId}${reported ? ` (${reported.path})` : ""}`,
+      `profile:  ${profile.label}`,
       `session:  ${s.id}`,
       `runs:     ${s.runCount}, created ${ago(s.createdAt)}, updated ${ago(s.updatedAt)}`,
     ];
@@ -111,7 +137,10 @@ export function createMcpHandler(store: Store) {
       "list_workers",
       {
         title: "List workers",
-        description: "Dev machines and the execution profiles available on each.",
+        description:
+          "Dev machines, the accounts available on each, and the projects each machine " +
+          "says it has. Paths and ceilings are reported by the machine itself, which " +
+          "holds them -- they cannot be set from here.",
         annotations: { readOnlyHint: true },
       },
       () => {
@@ -121,15 +150,24 @@ export function createMcpHandler(store: Store) {
           const stale =
             !w.lastSeenAt || Date.now() - new Date(w.lastSeenAt).getTime() > config.workerStaleMs;
           const profiles = store.listProfiles(w.id);
+          const credentialOf = (label: string): string | null =>
+            w.inventory?.profiles.find((p) => p.label === label)?.credential ?? null;
           const rows = profiles.length
-            ? profiles.map(
-                (p) =>
-                  `    ${p.label} [${p.id}] -> ${[p.command, ...p.launchArgs, ...p.args].join(" ")}`.trimEnd(),
-              )
-            : ["    (no profiles)"];
+            ? profiles.map((p) => {
+                const cred = credentialOf(p.label);
+                return `    ${p.label} [${p.id}]${cred ? ` -> account ${cred}` : ""}`;
+              })
+            : ["    (no accounts)"];
+          const projects = (w.inventory?.projects ?? []).map(
+            (p) =>
+              `    ${p.id} at ${p.path} (${p.profile}, ${p.posture}${p.contained ? ", sandboxed" : ""})`,
+          );
           return [
             `${w.id} (${w.platform ?? "?"}) - ${stale ? "OFFLINE" : "online"}, seen ${ago(w.lastSeenAt)}`,
             ...rows,
+            ...(projects.length
+              ? [`    -- reported ${ago(w.inventoryAt)} --`, ...projects]
+              : ["    (this machine has not reported its projects yet)"]),
           ].join("\n");
         });
         return text(out.join("\n\n"));
@@ -140,7 +178,9 @@ export function createMcpHandler(store: Store) {
       "list_projects",
       {
         title: "List projects",
-        description: "Registered projects, which machine each lives on, and its default profile.",
+        description:
+          "Registered projects, which machine each lives on, its default account, and " +
+          "how much autonomy its agents get.",
         annotations: { readOnlyHint: true },
       },
       () => {
@@ -151,14 +191,14 @@ export function createMcpHandler(store: Store) {
             .map((p) => {
               const prof = p.defaultProfileId ? store.getProfile(p.defaultProfileId).label : "none";
               const ctx = p.context ? `\n    ${p.context}` : "";
-              const perms = [
-                `mode ${p.permissionMode ?? "default"}`,
-                p.allowedTools.length > 0 ? `allowed: ${p.allowedTools.join(", ")}` : null,
-                p.deniedTools.length > 0 ? `denied: ${p.deniedTools.join(", ")}` : null,
-              ]
-                .filter((s) => s !== null)
-                .join("; ");
-              return `${p.name} - ${p.workerId}:${p.path}\n    default profile: ${prof}\n    permissions: ${perms}${ctx}`;
+              const reported = store
+                .getWorker(p.workerId)
+                .inventory?.projects.find((r) => r.id === p.id);
+              const where = reported ? `${p.workerId}:${reported.path}` : `${p.workerId}`;
+              return (
+                `${p.name} - ${where}\n    default account: ${prof}` +
+                `\n    autonomy: ${describePosture(p, reported)}${ctx}`
+              );
             })
             .join("\n\n"),
         );
@@ -170,34 +210,26 @@ export function createMcpHandler(store: Store) {
       {
         title: "Register a project",
         description:
-          "Add or update a project. Re-registering an existing name updates it in place: " +
-          "worker and path are always overwritten with whatever you pass, while " +
-          "defaultProfile and context keep their current values when omitted. So read the " +
-          "project first if you only mean to change one field -- a wrong path is not an " +
-          "error, it silently repoints the project.",
+          "Update a project's account, notes, or how much autonomy you are asking for. " +
+          "It cannot create a project a machine does not already have: the checkout's " +
+          "path and the ceiling on what its agents may do live on that machine, set by " +
+          "the enrolment wizard there. The posture you set here is a request -- the " +
+          "machine takes the stricter of yours and its own, so you can always ask for " +
+          "less autonomy and never for more. worker is overwritten with whatever you " +
+          "pass; everything else keeps its value when omitted.",
         inputSchema: {
           name: z.string().describe("Short unique name, e.g. alexandria"),
           worker: z.string().describe("Worker id from list_workers"),
-          path: z.string().describe("Absolute path to the checkout on that machine"),
           defaultProfile: z.string().optional().describe("Profile id to run by default"),
-          permissionMode: z
-            .enum(PERMISSION_MODES)
+          posture: z
+            .enum(POSTURES)
             .optional()
             .describe(
-              "How much the agent may do unattended. \"default\" passes nothing and " +
-                "Claude Code asks about almost everything, which is a lot of notifications.",
+              "How much the agent may do unattended: \"ask\" for nothing without asking " +
+                "(safest, most notifications), \"edits\" to let it change files and run " +
+                "read-only commands, \"trusted\" to let it run commands too. Deleting, " +
+                "pushing, publishing, installing and reading secrets are refused in all three.",
             ),
-          allowedTools: z
-            .array(z.string())
-            .optional()
-            .describe(
-              "Tool patterns that never become an approval, e.g. [\"Read\", \"Bash(git *)\"]. " +
-                "Replaces the whole list; omit it to leave the current one alone.",
-            ),
-          deniedTools: z
-            .array(z.string())
-            .optional()
-            .describe("Tool patterns refused outright, whatever the mode allows."),
           context: z
             .string()
             .optional()
@@ -208,22 +240,25 @@ export function createMcpHandler(store: Store) {
         const project = store.registerProject({
           name: args.name,
           workerId: args.worker,
-          path: args.path,
           defaultProfileId: args.defaultProfile ?? null,
           context: args.context ?? null,
-          permissionMode: args.permissionMode ?? null,
-          allowedTools: args.allowedTools ?? null,
-          deniedTools: args.deniedTools ?? null,
+          requestedPosture: args.posture ?? null,
         });
-        const perms = [
-          `mode ${project.permissionMode ?? "default"}`,
-          project.allowedTools.length > 0 ? `allowed: ${project.allowedTools.join(", ")}` : null,
-          project.deniedTools.length > 0 ? `denied: ${project.deniedTools.join(", ")}` : null,
-        ]
-          .filter((s) => s !== null)
-          .join("; ");
+        const worker = store.getWorker(project.workerId);
+        const reported = worker.inventory?.projects.find((p) => p.id === project.id);
+
+        // The machine is the authority on which projects it has. If it has
+        // reported in and this is not among them, the session would be refused
+        // at run time -- so say so now rather than after the first failure.
+        const warning =
+          worker.inventory && !reported
+            ? `\n\nNote: ${worker.id} has not reported a project called ${project.id}, so a ` +
+              `session would be refused there. Run the enrolment wizard on that machine to ` +
+              `give it a path and a ceiling.`
+            : "";
         return text(
-          `Registered ${project.name} on ${project.workerId} at ${project.path}.\nPermissions: ${perms}.`,
+          `Registered ${project.name} on ${project.workerId}.\n` +
+            `Autonomy: ${describePosture(project, reported)}.${warning}`,
         );
       },
     );

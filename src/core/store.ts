@@ -4,18 +4,22 @@ import { nowIso } from "../db/index.ts";
 import {
   canTransition,
   NotFound,
-  PERMISSION_MODES,
+  POSTURES,
   StateError,
   type Message,
   type MessageKind,
-  type PermissionMode,
+  type Posture,
   type Profile,
   type Project,
   type Session,
   type SessionState,
   type Worker,
+  type WorkerInventory,
   type WorkItem,
 } from "./types.ts";
+import { slug } from "./slug.ts";
+
+export { slug };
 
 type Row = Record<string, unknown>;
 
@@ -31,8 +35,31 @@ function mapWorker(r: Row): Worker {
     name: str(r.name),
     platform: strOrNull(r.platform),
     lastSeenAt: strOrNull(r.last_seen_at),
+    inventory: parseInventory(strOrNull(r.inventory_json)),
+    inventoryAt: strOrNull(r.inventory_at),
     createdAt: str(r.created_at),
   };
+}
+
+/**
+ * Worker-reported inventory, parsed defensively.
+ *
+ * It is display data written by another machine, so a shape we do not
+ * recognise becomes "nothing reported" rather than an exception on a list call.
+ */
+function parseInventory(raw: string | null): WorkerInventory | null {
+  if (raw === null || raw === "") return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const o = parsed as Record<string, unknown>;
+    return {
+      projects: Array.isArray(o.projects) ? (o.projects as WorkerInventory["projects"]) : [],
+      profiles: Array.isArray(o.profiles) ? (o.profiles as WorkerInventory["profiles"]) : [],
+    };
+  } catch {
+    return null;
+  }
 }
 
 function mapProfile(r: Row): Profile {
@@ -40,32 +67,18 @@ function mapProfile(r: Row): Profile {
     id: str(r.id),
     workerId: str(r.worker_id),
     label: str(r.label),
-    command: str(r.command),
-    launchArgs: JSON.parse(str(r.launch_args_json)) as string[],
-    args: JSON.parse(str(r.args_json)) as string[],
-    env: JSON.parse(str(r.env_json)) as Record<string, string>,
-    credentialRef: strOrNull(r.credential_ref),
     createdAt: str(r.created_at),
   };
 }
-
-const jsonArray = (value: unknown): string[] => {
-  if (typeof value !== "string" || value === "") return [];
-  const parsed: unknown = JSON.parse(value);
-  return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
-};
 
 function mapProject(r: Row): Project {
   return {
     id: str(r.id),
     name: str(r.name),
     workerId: str(r.worker_id),
-    path: str(r.path),
     defaultProfileId: strOrNull(r.default_profile_id),
     context: strOrNull(r.context),
-    permissionMode: strOrNull(r.permission_mode) as Project["permissionMode"],
-    allowedTools: jsonArray(r.allowed_tools_json),
-    deniedTools: jsonArray(r.denied_tools_json),
+    requestedPosture: strOrNull(r.requested_posture) as Posture | null,
     createdAt: str(r.created_at),
     archivedAt: strOrNull(r.archived_at),
   };
@@ -107,15 +120,6 @@ function mapMessage(r: Row): Message {
 
 const hashToken = (token: string): string =>
   createHash("sha256").update(token, "utf8").digest("hex");
-
-export function slug(s: string): string {
-  const out = s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  if (!out) throw new StateError(`cannot derive an id from ${JSON.stringify(s)}`);
-  return out;
-}
 
 /** Fired after any change worth telling the operator about. */
 export interface StoreEvent {
@@ -195,6 +199,18 @@ export class Store {
     return found ? mapWorker(found) : null;
   }
 
+  /**
+   * Records what a worker says it has: project paths, profile labels, the
+   * posture each project allows. Display only -- nothing here is ever read back
+   * to launch a session, because the machine is the authority on all of it.
+   */
+  setInventory(workerId: string, inventory: WorkerInventory): void {
+    this.getWorker(workerId);
+    this.#db
+      .prepare(`UPDATE workers SET inventory_json = ?, inventory_at = ? WHERE id = ?`)
+      .run(JSON.stringify(inventory), nowIso(), workerId);
+  }
+
   heartbeat(workerId: string, platform?: string): void {
     this.#db
       .prepare(`UPDATE workers SET last_seen_at = ?, platform = COALESCE(?, platform) WHERE id = ?`)
@@ -203,41 +219,22 @@ export class Store {
 
   // --------------------------------------------------------------- profiles
 
-  createProfile(input: {
-    workerId: string;
-    label: string;
-    command: string;
-    launchArgs?: string[];
-    args?: string[];
-    env?: Record<string, string>;
-    credentialRef?: string | null;
-  }): Profile {
+/**
+   * Declares that a worker has an account under this label.
+   *
+   * There is nothing else to store. The machine's runner config says what the
+   * label runs and with which credential, and this call cannot reach that --
+   * which is the whole point of it being this short.
+   */
+  createProfile(input: { workerId: string; label: string }): Profile {
     const id = `${input.workerId}:${slug(input.label)}`;
     this.#db
       .prepare(
-        `INSERT INTO profiles
-           (id, worker_id, label, command, launch_args_json, args_json,
-            env_json, credential_ref, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           label = excluded.label,
-           command = excluded.command,
-           launch_args_json = excluded.launch_args_json,
-           args_json = excluded.args_json,
-           env_json = excluded.env_json,
-           credential_ref = excluded.credential_ref`,
+        `INSERT INTO profiles (id, worker_id, label, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET label = excluded.label`,
       )
-      .run(
-        id,
-        input.workerId,
-        input.label,
-        input.command,
-        JSON.stringify(input.launchArgs ?? []),
-        JSON.stringify(input.args ?? []),
-        JSON.stringify(input.env ?? {}),
-        input.credentialRef ?? null,
-        nowIso(),
-      );
+      .run(id, input.workerId, input.label, nowIso());
     return this.getProfile(id);
   }
 
@@ -304,22 +301,12 @@ export class Store {
     name: string;
     platform?: string;
     replace?: boolean;
-    profiles?: {
-      label: string;
-      command: string;
-      launchArgs?: string[];
-      args?: string[];
-      env?: Record<string, string>;
-      credentialRef?: string | null;
-    }[];
+    profiles?: { label: string }[];
     projects?: {
       name: string;
-      path: string;
       profileLabel?: string | null;
       context?: string | null;
-      permissionMode?: PermissionMode | null;
-      allowedTools?: string[] | null;
-      deniedTools?: string[] | null;
+      posture?: Posture | null;
     }[];
   }): { worker: Worker; token: string; profileIds: string[]; projectNames: string[] } {
     return this.#tx(() => {
@@ -367,12 +354,9 @@ export class Store {
       this.registerProject({
         name: project.name,
         workerId,
-        path: project.path,
         defaultProfileId: profileId,
         context: project.context ?? null,
-        permissionMode: project.permissionMode ?? null,
-        allowedTools: project.allowedTools ?? null,
-        deniedTools: project.deniedTools ?? null,
+        requestedPosture: project.posture ?? null,
       });
     }
     return {
@@ -396,57 +380,35 @@ export class Store {
   registerProject(input: {
     name: string;
     workerId: string;
-    path: string;
     defaultProfileId?: string | null;
     context?: string | null;
-    permissionMode?: PermissionMode | null;
-    allowedTools?: string[] | null;
-    deniedTools?: string[] | null;
+    requestedPosture?: Posture | null;
   }): Project {
-    if (input.permissionMode != null && !PERMISSION_MODES.includes(input.permissionMode)) {
+    if (input.requestedPosture != null && !POSTURES.includes(input.requestedPosture)) {
       throw new StateError(
-        `unknown permission mode ${JSON.stringify(input.permissionMode)}; use one of ${PERMISSION_MODES.join(", ")}`,
+        `unknown posture ${JSON.stringify(input.requestedPosture)}; use one of ${POSTURES.join(", ")}`,
       );
     }
     this.#db
       .prepare(
         `INSERT INTO projects
-           (id, name, worker_id, path, default_profile_id, context,
-            permission_mode, allowed_tools_json, denied_tools_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, '[]'), COALESCE(?, '[]'), ?)
+           (id, name, worker_id, default_profile_id, context, requested_posture, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET
            worker_id = excluded.worker_id,
-           path = excluded.path,
            default_profile_id = COALESCE(excluded.default_profile_id, projects.default_profile_id),
            context = COALESCE(excluded.context, projects.context),
-           permission_mode = COALESCE(excluded.permission_mode, projects.permission_mode),
-           allowed_tools_json = COALESCE(?, projects.allowed_tools_json),
-           denied_tools_json = COALESCE(?, projects.denied_tools_json),
+           requested_posture = COALESCE(excluded.requested_posture, projects.requested_posture),
            archived_at = NULL`,
       )
       .run(
         slug(input.name),
         input.name,
         input.workerId,
-        input.path,
         input.defaultProfileId ?? null,
         input.context ?? null,
-        input.permissionMode ?? null,
-        input.allowedTools === undefined || input.allowedTools === null
-          ? null
-          : JSON.stringify(input.allowedTools),
-        input.deniedTools === undefined || input.deniedTools === null
-          ? null
-          : JSON.stringify(input.deniedTools),
+        input.requestedPosture ?? null,
         nowIso(),
-        // Repeated for the ON CONFLICT branch, which cannot see excluded
-        // values that were never inserted as themselves.
-        input.allowedTools === undefined || input.allowedTools === null
-          ? null
-          : JSON.stringify(input.allowedTools),
-        input.deniedTools === undefined || input.deniedTools === null
-          ? null
-          : JSON.stringify(input.deniedTools),
       );
     return this.getProject(input.name);
   }

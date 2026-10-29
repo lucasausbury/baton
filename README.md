@@ -55,16 +55,19 @@ npm install
 BATON_ADMIN_TOKEN=$(openssl rand -hex 24) npm run server
 ```
 
-Register a machine, a profile and a project:
+Machines are normally set up **from the machine**, with the wizard below, which
+is the only way to get a path and a permission ceiling onto one. The server-side
+CLI registers the names:
 
 ```bash
 npm run cli -- worker add "MacBook Pro" --platform darwin
-npm run cli -- profile add --worker macbook-pro --label opus-personal \
-  --command claude --args="--model opus" --env CLAUDE_CONFIG_DIR=~/.claude-personal \
-  --credential personal
+npm run cli -- profile add --worker macbook-pro --label opus-personal
 npm run cli -- project add --name alexandria --worker macbook-pro \
-  --path /Users/you/src/alexandria --profile macbook-pro:opus-personal
+  --profile macbook-pro:opus-personal --posture edits
 ```
+
+Note what is not there: no command, no environment, no path. Those cannot be set
+from the server at all — see "What the server knows, and what it cannot" below.
 
 The worker token is printed once and is not recoverable.
 
@@ -92,9 +95,9 @@ npm run enroll -- --server https://baton.example.com
 ```
 
 The wizard asks what this machine is, finds Claude Code on it, asks which
-accounts it has and which projects live here, and asks per project how much its
-agents may do without asking you. Then it registers the lot in one call and
-writes `runner.config.json` itself.
+accounts it has and which projects live here, and asks per project the most its
+agents may ever do. Then it tells the server the **names** — and only the names
+— and writes everything else into this machine's own config.
 
 The worker token goes from the server straight into that file without ever
 being displayed, which is the point: copying one off a terminal and carrying it
@@ -106,10 +109,41 @@ Enrollment authenticates with `BATON_LOGIN_PASSWORD`. That password already
 grants full control through MCP, so this gives it nothing new, and it is rate
 limited the same way the consent screen is.
 
+### What the server knows, and what it cannot
+
+The server stores a project's **name**, which machine it is on, which account
+label runs it, and which posture you are asking for. That is all.
+
+It does not store, and cannot set:
+
+| | Where it lives instead |
+| - | - |
+| the command to run, and its arguments | the worker's config |
+| the agent's environment | the worker's config |
+| the checkout's path on disk | the worker's config |
+| credentials | the worker's config, as they always did |
+| the ceiling on what a session may do | the worker's config |
+| the refusals no session can get under | that machine's managed settings |
+
+This is deliberate and it is the main thing baton is careful about. A server
+that could name an executable, set its environment and choose its working
+directory would be a server that can run anything it likes on every machine
+enrolled with it — and one password would be all that stood in the way. With
+those fields on the worker, baton grants no power that sitting down at the
+machine and running Claude Code does not. A server that is taken over can queue
+work you would not have asked for, inside limits you already approved.
+
+The posture is a request rather than a grant. The worker takes the stricter of
+what the server asks for and what its own config allows, so a compromised
+server can only ever ask for *less* autonomy than you already permitted.
+
 ### The config it writes
 
-You can also write `runner.config.json` by hand (or point `BATON_RUNNER_CONFIG`
-at one elsewhere), which is what the wizard is doing for you:
+You can also write it by hand. The wizard puts it at
+`~/.baton/runner.config.json`, deliberately **outside** any checkout — the old
+location was inside baton's own repository, which is a project an agent may be
+working in, and an agent that can read this file has the worker token and every
+credential on the machine. `BATON_RUNNER_CONFIG` overrides the location.
 
 ```json
 {
@@ -120,6 +154,24 @@ at one elsewhere), which is what the wizard is doing for you:
   "credentials": {
     "personal": { "CLAUDE_CONFIG_DIR": "/Users/you/.claude-personal" },
     "client-acme": { "ANTHROPIC_API_KEY": "sk-ant-..." }
+  },
+  "profiles": {
+    "opus-personal": {
+      "command": "/Users/you/.local/bin/claude",
+      "launchArgs": [],
+      "args": ["--model", "opus"],
+      "env": {},
+      "credentialRef": "personal"
+    }
+  },
+  "projects": {
+    "alexandria": {
+      "path": "/Users/you/src/alexandria",
+      "profile": "opus-personal",
+      "posture": "edits",
+      "contained": true,
+      "allowedDomains": []
+    }
   }
 }
 ```
@@ -128,12 +180,18 @@ at one elsewhere), which is what the wizard is doing for you:
 npm run runner
 ```
 
-`credentials` maps a profile's `credential_ref` to the environment that profile
-needs, and lives only on the worker.
+`profiles` and `projects` are keyed by the slug the server derives from a label
+or a name, which is what it sends back. A session naming a project or a profile
+this file does not have is **refused**, with exit 78 and an explanation, rather
+than run against a guessed path or permission level.
 
 The runner needs no inbound connectivity, survives network changes, and backs
 off and retries when the server is unreachable. A bad token is the one failure it
 exits on, since retrying cannot fix it.
+
+On startup it tells the server what it has — paths, labels, postures — purely so
+the lists in the Claude apps are useful. The server keeps that as reported and
+never reads it back to launch anything.
 
 ### Accounts and credentials
 
@@ -181,14 +239,19 @@ parsing — so the runner refuses to do it and says so. npm installs Claude Code
 Windows as `claude.cmd`, so a Windows profile needs either `claude.exe` or node
 plus the CLI entry point:
 
-```bash
-npm run cli -- profile add --worker windows-desktop --label opus-personal \
-  --command "C:/Program Files/nodejs/node.exe" \
-  --launch-args="C:/Users/you/AppData/Roaming/npm/node_modules/@anthropic-ai/claude-code/cli.js" \
-  --args="--model opus"
+```json
+"profiles": {
+  "opus-personal": {
+    "command": "C:/Program Files/nodejs/node.exe",
+    "launchArgs": ["C:/Users/you/AppData/Roaming/npm/node_modules/@anthropic-ai/claude-code/cli.js"],
+    "args": ["--model", "opus"]
+  }
+}
 ```
 
-`--launch-args` go before the runner's own flags; `--args` go after.
+`launchArgs` go before the runner's own flags; `args` go after. The wizard
+works this out for you: if it finds only a `.cmd` shim it points at the
+`cli.js` beside it instead.
 
 ### Controlling how much it asks you
 
@@ -196,35 +259,102 @@ A `-p` run starts in Manual mode, where almost everything needs approval. Left
 alone that is relentless: a small task becomes dozens of notifications, and a
 session that stays blocked nags you again every twenty minutes.
 
-So permissions are a property of the **project**, not the profile. A profile is
-per account and shared across everything on a machine, while how much autonomy
-to grant depends on whose code it is — a client's repo and a scratch repo
-deserve different answers.
+So each project has a **posture**, set on the machine that runs it. A project is
+the right scope: a profile is per account and shared across everything on a
+machine, while how much autonomy to grant depends on whose code it is — a
+client's repo and a scratch repo deserve different answers.
 
-The wizard offers three postures, and `project add` sets them directly:
-
-| Posture | What runs unattended |
+| `posture` | What runs unattended |
 | - | - |
-| Ask me about everything | Nothing. Safest, and by far the most notifications |
-| Let it edit files, ask before commands | Edits, reads, searches, and read-only git and test commands |
-| Trust it, but block what cannot be undone | Everything except deleting, pushing, publishing, installing and fetching |
+| `ask` | Nothing. Safest, and by far the most notifications |
+| `edits` | Edits, reads, searches, and read-only git and test commands |
+| `trusted` | Those plus shell commands generally |
+
+Deleting, pushing, publishing, installing, fetching from the network and reading
+anything that looks like a secret are refused in **all three**. The cost of
+being wrong about those does not fall as trust rises.
+
+The runner turns the posture into a settings document and passes it with
+`--settings`, which sits above project, local and user settings in Claude Code's
+precedence — so an agent cannot loosen any of it by writing a
+`.claude/settings.json` into the repository it is working on. Only managed
+settings outrank it, and those are the machine's own floor. Anything allowed is
+resolved by Claude Code itself, so it never becomes a permission request and
+never reaches your phone.
+
+No posture uses `bypassPermissions`. That mode skips the protected paths on
+`.git` and `.claude` and skips read containment, and the docs say to use it only
+in a container or a VM. A wide allow list under `acceptEdits` is just as quiet
+and leaves every guard standing.
+
+From the Claude app, `register_project` can ask for a different posture, which
+is what you want mid-task. It can only ask for less than the machine allows.
+
+### The machine's floor
+
+The posture decides what a session may do. The floor decides what **no** session
+on that machine may do, whatever baton asks for — a bad posture, a bug in the
+settings we synthesise, or a server that has been taken over.
+
+It is a `managed-settings.json`, which Claude Code applies above everything
+including the command line, and which lives in a system directory needing
+administrator rights to write. That is the point: an agent runs as you, so
+anything you can write it can rewrite.
 
 ```bash
-npm run cli -- project add --name alexandria --worker macbook-pro \
-  --path /Users/you/src/alexandria \
-  --permission-mode acceptEdits \
-  --allow Read --allow "Bash(git status*)" --deny "Bash(rm *)"
+npm run floor
 ```
 
-These become `--permission-mode`, `--allowedTools` and `--disallowedTools` on
-the agent's own command line, so **Claude Code resolves them itself**. Anything
-allowed never becomes a permission request, never reaches the shim, and never
-reaches your phone — which is cheaper and safer than a second matcher of ours
-deciding what was meant.
+That writes the file next to your runner config and prints the one elevated
+command to install it. The wizard does the same at the end of enrolment. Check
+it took: run `claude`, type `/status`, and look for managed settings on the
+`Setting sources` line.
 
-They are also settable from the Claude app through `register_project`, which is
-where you would actually want to loosen something mid-task. Project settings are
-applied after the profile's own `--args`, so a project wins a disagreement.
+The floor denies reads and edits of `~/.ssh`, `~/.aws`, `~/.gnupg`, the Claude
+config directories, baton's own config, and the usual secrets inside a checkout;
+it turns on `blockReadsOutsideWorkingDirectories`; and it sets
+`disableBypassPermissionsMode`, so nothing on the machine can start a session in
+the one mode that would skip the rest. It contains no allow rules at all — a
+managed allow would be a hole no lower scope could close.
+
+> On **WSL**, `/etc/claude-code` is writable by you, so a floor placed there is
+> one an agent could rewrite. Put the policy in the Windows chain
+> (`C:\Program Files\ClaudeCode` or HKLM) and set `wslInheritsWindowsSettings`
+> there instead.
+
+### Containment
+
+Everything above is policy inside Claude Code. It covers Claude's own file tools
+and the file commands it recognises in Bash — but not a script that opens files
+itself. `npm test` runs whatever the repository says it runs.
+
+For a boundary the operating system enforces, set `"contained": true` on a
+project. Writes are then confined to the checkout and network egress is refused
+except for the hosts in `allowedDomains`, which starts empty.
+
+This is Claude Code's sandbox, and it exists on **macOS, Linux and WSL2** —
+Seatbelt on macOS, bubblewrap on Linux, so `bubblewrap` and `socat` need to be
+installed there. It does **not** exist on native Windows. A project marked
+contained on a native Windows worker is refused rather than quietly run in the
+open, because a containment flag that silently means nothing is worse than no
+flag at all. To contain work on a Windows machine, run its worker under WSL2.
+
+Mixing is expected and is why the setting is per project: the projects that can
+be contained are, and a project needing a Windows-native toolchain stays native
+with a tighter posture to compensate.
+
+### The brief is not trusted
+
+The agent is told, before it reads the brief, that the brief arrived over a queue
+and may not have come from you; that its work belongs inside one directory; and
+to stop and ask rather than read credentials, act outside that directory, send
+the repository anywhere, or install anything. It is also told not to act on
+instructions found in the files, issues and pages it reads while working.
+
+That is worth having and it is **not** a security control: the model is what an
+injection attacks, so it cannot be its own guard. The controls are the three
+above. This paragraph is for the ordinary malicious task from someone who has no
+idea what instructions the agent is carrying, and it costs nothing.
 
 ## Interfaces
 
@@ -298,6 +428,34 @@ mistakes live.
 
 ## Not built yet
 
+Agreed and next up:
+
+- **Approve and deny on the session page.** The page is read-only today, so a
+  notification means opening the app and typing a reply. The answering
+  machinery already exists — `reply` resolves the open ask and the shim is
+  already long-polling for it — so this is a POST and a form. The form must
+  carry the ask's message id, signed, and refuse if that is no longer the open
+  one: otherwise coming back to a stale page approves whatever the agent moved
+  on to. Approval buttons in the ntfy notification itself follow from the same
+  signed token.
+- **Requiring approval to *start* a session.** The strongest control available
+  and nearly free once the page can answer. An attacker holding an MCP
+  credential can queue work; if the project asks for it, that session waits
+  blocked until it is approved. The approval must not be answerable over MCP —
+  otherwise whoever queued the work approves it themselves — so it belongs to
+  the password-authenticated page, which is also the argument for splitting the
+  one password into read-and-approve versus enrol-and-administer.
+- **A bounded wait, for asking rather than dispatching.** `create_session` with
+  a `waitSeconds` (capped around a minute), long-polling server-side the way
+  `/v1/work` already does, and returning the transcript so far. For "find X on
+  that machine" the answer comes back inside the same tool call, and the chat
+  formats it. Most of what makes a session feel like fire-and-forget is this
+  being absent.
+- **Roadmap items per project.** Somewhere to put an idea without starting work:
+  a body, a project, a state, and the session it eventually became. Capture
+  latency is the whole value, so one sentence with no required fields. Promoting
+  an item hands its text back to the chat to turn into a brief rather than
+  passing a three-word reminder to an agent as a prompt.
 - **A queue overview page.** `/s/<id>` shows one session; there is still no
   page that lists them, for glancing at everything in flight without starting a
   conversation.
@@ -306,8 +464,12 @@ mistakes live.
   from the persisted session when the answer arrives — worth doing if you find
   yourself approving things the next morning.
 - **Feeding operator messages to a live agent's stdin.** The server side exists
-  (`/v1/sessions/:id/inbound`, `--input-format stream-json`) but nothing needs it
-  yet, because approvals and questions both go out through the shim.
+  and is tested (`/v1/sessions/:id/inbound`, `takeInbound`); nothing consumes it,
+  because the agent is spawned with stdin closed. Wiring it up means running with
+  `--input-format stream-json`, and then the process no longer exits when it
+  finishes a turn — so "the agent is done" stops being "the process exited", and
+  every part of the state machine that keys off that needs a new signal. That is
+  the real cost, and it is why the bounded wait above comes first.
 - **Opt-in rate-limit fallback.** A profile could name a `fallbackProfileId` used
   only when a run fails on a rate limit. It must stay opt-in and explicit: a
   client's conventions arrive through their account, so a silent swap would

@@ -2,43 +2,43 @@ import { parseArgs } from "node:util";
 import { openDb } from "./db/index.ts";
 import { Store } from "./core/store.ts";
 import { config } from "./config.ts";
-import type { PermissionMode, Project } from "./core/types.ts";
+import { POSTURES, type Posture, type Project, type Worker } from "./core/types.ts";
 
 const USAGE = `baton admin CLI  (db: ${config.dbPath})
 
   worker add <name> [--platform darwin|win32|linux]
   worker ls
+              Prints what each machine has reported about itself.
 
-  profile add --worker <id> --label <l> --command <cmd>
-              [--launch-args=<path>/cli.js] [--args="--model opus"]
-              [--env K=V]... [--credential <ref>]
-              launch-args go before our flags; use them when command is node,
-              which is how to run Claude Code on Windows. args go after, for
-              things like --model.
-              Re-adding an existing label REPLACES that profile outright, so
-              state it in full -- flags you leave off go back to their defaults.
+  profile add --worker <id> --label <l>
+              Declares that a machine has an account under this label. What the
+              label actually runs -- the binary, its arguments, its environment,
+              which credential -- is in that machine's runner.config.json, and
+              cannot be set from here or from the Claude apps.
   profile ls [--worker <id>]
   profile rm <id>
               Refused while a session or a project's default still points at it.
 
-  project add --name <n> --worker <id> --path <abs> [--profile <id>] [--context "..."]
-              [--permission-mode <m>] [--allow <pattern>]... [--deny <pattern>]...
-              permission-mode is one of default, acceptEdits, auto, manual,
-              dontAsk, plan, bypassPermissions. allow and deny take Claude Code
-              tool patterns, e.g. --allow "Bash(git *)" --allow Read. Anything
-              allowed here never becomes an approval on your phone.
-              worker and path always overwrite; everything else is kept when
-              you leave it off, so you can change one setting at a time.
+  project add --name <n> --worker <id> [--profile <id>] [--context "..."]
+              [--posture ask|edits|trusted]
+              posture is a request, not a grant: the machine holds the ceiling
+              and takes the stricter of the two, so you can ask for less
+              autonomy and never for more. The checkout's path lives on that
+              machine too.
+              worker always overwrites; everything else is kept when you leave
+              it off, so you can change one setting at a time.
   project ls
 
   session ls [--state blocked]
 
+Machines are set up from the machine itself:
+  npm run enroll -- --server ${config.publicUrl || "https://baton.example.com"}
+
 Everything else is driven from the Claude apps over MCP.`;
 
 // parseArgs refuses a value that begins with a dash unless it is joined with an
-// equals sign -- and nearly every useful --args value begins with one. Left
-// alone that surfaces as an unhandled TypeError and a stack trace, so catch it
-// and say what to type instead.
+// equals sign. Left alone that surfaces as an unhandled TypeError and a stack
+// trace, so catch it and say what to type instead.
 function parseCommandLine() {
   try {
     return parseArgs(PARSE_OPTIONS);
@@ -48,7 +48,7 @@ function parseCommandLine() {
       console.error(
         `${err instanceof Error ? err.message.split("\n")[0] : String(err)}\n\n` +
           `Join the value to the flag with "=" when it starts with a dash:\n` +
-          `  --args="--model opus"      not  --args "--model opus"`,
+          `  --context="-- see the wiki"      not  --context "-- see the wiki"`,
       );
       process.exit(1);
     }
@@ -62,31 +62,15 @@ const PARSE_OPTIONS = {
     platform: { type: "string" },
     worker: { type: "string" },
     label: { type: "string" },
-    command: { type: "string" },
-    args: { type: "string" },
-    "launch-args": { type: "string" },
-    env: { type: "string", multiple: true },
-    credential: { type: "string" },
     name: { type: "string" },
-    path: { type: "string" },
     profile: { type: "string" },
     context: { type: "string" },
     state: { type: "string" },
-    "permission-mode": { type: "string" },
-    allow: { type: "string", multiple: true },
-    deny: { type: "string", multiple: true },
+    posture: { type: "string" },
   },
 } as const;
 
 const { positionals, values } = parseCommandLine();
-
-/** One line describing what a project's agents may do unattended. */
-function describePermissions(p: Project): string {
-  const parts = [`mode=${p.permissionMode ?? "default"}`];
-  if (p.allowedTools.length > 0) parts.push(`allow=${p.allowedTools.join(" ")}`);
-  if (p.deniedTools.length > 0) parts.push(`deny=${p.deniedTools.join(" ")}`);
-  return parts.join("  ");
-}
 
 function need(value: string | undefined, flag: string): string {
   if (!value) {
@@ -96,8 +80,48 @@ function need(value: string | undefined, flag: string): string {
   return value;
 }
 
+function asPosture(value: string | undefined): Posture | null {
+  if (value === undefined) return null;
+  if (!POSTURES.includes(value as Posture)) {
+    console.error(`--posture must be one of ${POSTURES.join(", ")}, got ${value}`);
+    process.exit(1);
+  }
+  return value as Posture;
+}
+
 const db = openDb();
 const store = new Store(db);
+
+/** What the worker said about a project, or undefined if it has not reported. */
+const reportedFor = (project: Project) =>
+  store.getWorker(project.workerId).inventory?.projects.find((p) => p.id === project.id);
+
+function describeProject(p: Project): string {
+  const reported = reportedFor(p);
+  const where = reported ? `${p.workerId}:${reported.path}` : `${p.workerId} (not reported)`;
+  const asked = p.requestedPosture ?? "machine default";
+  const ceiling = reported ? `machine allows ${reported.posture}` : "ceiling unknown";
+  const sandbox = reported?.contained === true ? ", sandboxed" : "";
+  return `${where}\tasked=${asked}\t${ceiling}${sandbox}`;
+}
+
+function describeWorker(w: Worker): string {
+  const lines = [`${w.id}\t${w.platform ?? "?"}\tlast seen ${w.lastSeenAt ?? "never"}`];
+  if (!w.inventory) {
+    lines.push("  (has not reported its projects yet)");
+    return lines.join("\n");
+  }
+  for (const p of w.inventory.profiles) {
+    lines.push(`  account ${p.label}${p.credential ? ` -> ${p.credential}` : " (signed-in)"}`);
+  }
+  for (const p of w.inventory.projects) {
+    lines.push(
+      `  project ${p.id} at ${p.path} (${p.profile}, ${p.posture}${p.contained ? ", sandboxed" : ""})`,
+    );
+  }
+  return lines.join("\n");
+}
+
 const [group, action, ...rest] = positionals;
 
 try {
@@ -111,37 +135,20 @@ try {
     console.log(`worker:  ${worker.id}`);
     console.log(`token:   ${token}`);
     console.log("\nPut that token in the runner's config. It is not recoverable -- if you");
-    console.log("lose it, delete the worker and add it again.");
+    console.log("lose it, delete the worker and add it again. Running the enrolment wizard");
+    console.log("on the machine itself avoids carrying it across by hand.");
   } else if (group === "worker" && action === "ls") {
-    for (const w of store.listWorkers()) {
-      console.log(`${w.id}\t${w.platform ?? "?"}\tlast seen ${w.lastSeenAt ?? "never"}`);
-    }
+    for (const w of store.listWorkers()) console.log(describeWorker(w));
   } else if (group === "profile" && action === "add") {
-    const env: Record<string, string> = {};
-    for (const pair of values.env ?? []) {
-      const eq = pair.indexOf("=");
-      if (eq < 1) {
-        console.error(`--env expects K=V, got ${pair}`);
-        process.exit(1);
-      }
-      env[pair.slice(0, eq)] = pair.slice(eq + 1);
-    }
     const profile = store.createProfile({
       workerId: need(values.worker, "worker"),
       label: need(values.label, "label"),
-      command: need(values.command, "command"),
-      launchArgs: values["launch-args"]
-        ? values["launch-args"].split(/\s+/).filter(Boolean)
-        : [],
-      args: values.args ? values.args.split(/\s+/).filter(Boolean) : [],
-      env,
-      credentialRef: values.credential ?? null,
     });
     console.log(`profile: ${profile.id}`);
+    console.log(`  What it runs is set in runner.config.json on ${profile.workerId}.`);
   } else if (group === "profile" && action === "ls") {
     for (const p of store.listProfiles(values.worker)) {
-      const invocation = [p.command, ...p.launchArgs, ...p.args].join(" ");
-      console.log(`${p.id}\t${invocation}\tcred=${p.credentialRef ?? "-"}`);
+      console.log(`${p.id}\t${p.label}`);
     }
   } else if (group === "profile" && action === "rm") {
     const id = rest[0];
@@ -155,19 +162,15 @@ try {
     const project = store.registerProject({
       name: need(values.name, "name"),
       workerId: need(values.worker, "worker"),
-      path: need(values.path, "path"),
       defaultProfileId: values.profile ?? null,
       context: values.context ?? null,
-      permissionMode: (values["permission-mode"] ?? null) as PermissionMode | null,
-      allowedTools: values.allow ?? null,
-      deniedTools: values.deny ?? null,
+      requestedPosture: asPosture(values.posture),
     });
-    console.log(`project: ${project.name} -> ${project.workerId}:${project.path}`);
-    console.log(`  permissions: ${describePermissions(project)}`);
+    console.log(`project: ${project.name}`);
+    console.log(`  ${describeProject(project)}`);
   } else if (group === "project" && action === "ls") {
     for (const p of store.listProjects()) {
-      console.log(`${p.name}\t${p.workerId}:${p.path}\tprofile=${p.defaultProfileId ?? "-"}`);
-      console.log(`  ${describePermissions(p)}`);
+      console.log(`${p.name}\t${describeProject(p)}\tprofile=${p.defaultProfileId ?? "-"}`);
     }
   } else if (group === "session" && action === "ls") {
     const sessions = store.listSessions({

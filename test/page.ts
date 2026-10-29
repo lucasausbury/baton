@@ -16,16 +16,10 @@ const db = openDb(join(dir, "page.db"));
 const store = new Store(db);
 
 const { worker } = store.createWorker("MacBook Pro", "darwin");
-const profile = store.createProfile({
-  workerId: worker.id,
-  label: "opus-personal",
-  command: "claude",
-  credentialRef: "personal",
-});
+const profile = store.createProfile({ workerId: worker.id, label: "opus-personal" });
 store.registerProject({
   name: "alexandria",
   workerId: worker.id,
-  path: "/Users/you/src/alexandria",
   defaultProfileId: profile.id,
 });
 
