@@ -53,6 +53,9 @@ const { values } = parseArgs({
   },
 });
 
+/** Printed on its own line; see Prompter.secret for why that matters. */
+const PASSWORD_PROMPT = "Login password (it is not shown as you type):";
+
 /** Stops the wizard with a message, without tearing down a live stdin. */
 class Stop extends Error {}
 const stop = (message: string): never => {
@@ -143,7 +146,7 @@ async function verifyPassword(p: Prompter, serverUrl: string, given: string): Pr
     }
     if (!p.interactive || attempt >= 4) stop("That password was not accepted.");
     console.log("  That password was not accepted by the server.");
-    password = await p.secret("Login password (not shown): ");
+    password = await p.secret(PASSWORD_PROMPT);
     if (password === "") stop("Stopped.");
   }
 }
@@ -446,7 +449,7 @@ async function run(p: Prompter): Promise<void> {
   draft.serverUrl = serverUrl;
   saveDraft(draftPath, draft);
 
-  let password = await p.secret("Login password (not shown): ");
+  let password = await p.secret(PASSWORD_PROMPT);
   if (password === "") stop("The login password is required.");
   password = await verifyPassword(p, serverUrl, password);
   console.log("  Password accepted.\n");
@@ -534,7 +537,7 @@ async function run(p: Prompter): Promise<void> {
     if (p.interactive && attempt < 4 && retryable) {
       console.log(`\n  The server refused: ${payload.error ?? `HTTP ${status}`}`);
       if (status === 401) {
-        password = await p.secret("  Login password (not shown): ");
+        password = await p.secret(PASSWORD_PROMPT);
         if (password === "") stop("Stopped. Everything you entered is saved; run this again.");
         continue;
       }
